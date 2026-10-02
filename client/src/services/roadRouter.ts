@@ -7,7 +7,9 @@
 // to the raw waypoints — the map never breaks.
 
 import type { RouteStop } from '../types/index.js';
+import bakedRoutesData from './baked-routes.json';
 
+const bakedRoutes = bakedRoutesData as unknown as Record<string, [number, number][]>;
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving';
 const memCache = new Map<string, [number, number][]>();
 
@@ -21,7 +23,7 @@ function cacheKey(routeId: string, stops: RouteStop[]): string {
 
 /**
  * Returns road-following [lon, lat] path through every stop in sequence.
- * Never rejects — falls back to `fallback` waypoints on any failure.
+ * Never rejects — uses baked road geometry or falls back cleanly.
  */
 export async function getRoadSnappedPath(
   routeId: string,
@@ -29,6 +31,11 @@ export async function getRoadSnappedPath(
   fallback: [number, number][],
   signal?: AbortSignal
 ): Promise<[number, number][]> {
+  // 1. Instant zero-latency baked street-snapped coordinates (575+ high-precision road points)
+  if (bakedRoutes[routeId] && bakedRoutes[routeId].length > 1) {
+    return bakedRoutes[routeId];
+  }
+
   if (!stops || stops.length < 2) return fallback;
   const key = cacheKey(routeId, stops);
 

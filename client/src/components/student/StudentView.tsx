@@ -151,9 +151,9 @@ export const StudentView: React.FC<StudentViewProps> = () => {
   const etaMins = liveBus ? Math.max(1, Math.round(liveBus.etaMinutesUpcomingStop || 0)) : 0;
 
   return (
-    <div className="relative w-full h-full flex flex-col md:flex-row overflow-hidden bg-slate-950">
-      {/* 1. Full-Screen 3D Geospatial Viewport (100% width & height on mobile) */}
-      <div className="absolute md:relative inset-0 md:flex-1 w-full h-full">
+    <div className="relative w-full h-full overflow-hidden bg-slate-950 select-none">
+      {/* 1. Full-Screen 3D Geospatial Viewport (100% immersive width & height) */}
+      <div className="absolute inset-0 w-full h-full">
         <MapLibre3DView
           activeRoute={data?.route}
           activeBus={liveBus}
@@ -190,26 +190,11 @@ export const StudentView: React.FC<StudentViewProps> = () => {
         />
       )}
 
-      {/* 2. Interactive Sliding Bottom Sheet (Mobile) & Persistent Sidebar (Desktop) */}
-      <div
-        className={`w-full md:w-[420px] lg:w-[460px] bg-slate-900/98 backdrop-blur-2xl border-t md:border-t-0 md:border-l border-slate-800 flex flex-col z-30 shadow-2xl transition-all duration-300 ease-out ${
-          isDrawerExpanded
-            ? 'fixed md:relative inset-x-0 bottom-16 md:bottom-auto top-14 md:top-auto h-[calc(100vh-120px)] md:h-full rounded-t-3xl md:rounded-none'
-            : 'fixed md:relative inset-x-0 bottom-16 md:bottom-auto h-[142px] md:h-full rounded-t-3xl md:rounded-none'
-        } overflow-hidden`}
-      >
-        {/* Mobile Drag Handle Bar & Peek Header */}
-        <div
-          onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
-          className="md:hidden flex flex-col items-center pt-2 pb-1 cursor-pointer bg-slate-900/95 active:bg-slate-800 select-none"
-        >
-          {/* Native Drag Pill Indicator */}
-          <div className="w-12 h-1.5 bg-slate-600 rounded-full mb-1.5"></div>
-        </div>
-
-        {/* Live Transit Peek Header (Visible on mobile collapsed and expanded) */}
-        <div className="px-3.5 py-2 md:p-4 border-b border-slate-800/80 bg-gradient-to-br from-slate-900 to-slate-950 flex-shrink-0">
-          <div className="flex items-center justify-between mb-1.5">
+      {/* 2. Desktop: Floating Frosted-Glass Transit Card */}
+      <div className="hidden md:flex absolute top-4 left-4 w-[380px] max-h-[calc(100vh-100px)] z-30 flex-col bg-slate-950/85 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-[0_16px_50px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-300 pointer-events-auto">
+        {/* Top Header */}
+        <div className="p-4 border-b border-white/10 bg-gradient-to-br from-slate-900/90 to-slate-950/90">
+          <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               {isLive ? (
                 <>
@@ -217,81 +202,72 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  <span className="text-[10px] md:text-xs font-bold tracking-wider text-emerald-400 uppercase">Live Telemetry Active</span>
+                  <span className="text-xs font-black tracking-wider text-emerald-400 uppercase">Live Telemetry Active</span>
                 </>
               ) : (
                 <>
                   <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                  <span className="text-[10px] md:text-xs font-bold tracking-wider text-amber-300 uppercase">Bus Parked • Awaiting Driver Shift</span>
+                  <span className="text-xs font-black tracking-wider text-amber-300 uppercase">Bus Parked • Awaiting Driver Shift</span>
                 </>
               )}
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] md:text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">
-                {data?.route.routeCode || 'ROUTE-AMB-01'}
-              </span>
-              <button
-                onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
-                className="md:hidden p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1 text-[10px] px-2 font-bold"
-              >
-                <span>{isDrawerExpanded ? 'Collapse' : 'Details'}</span>
-                {isDrawerExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-              </button>
-            </div>
+            <span className="text-[10px] font-mono bg-white/10 text-slate-300 px-2 py-0.5 rounded-full border border-white/10">
+              {data?.route.routeCode || 'ROUTE-AMB-01'}
+            </span>
           </div>
 
-          {/* ETA & Distance Hero Card + Mobile Quick Actions */}
-          <div className="grid grid-cols-2 gap-2 md:gap-3 bg-slate-800/80 p-2 md:p-3.5 rounded-2xl border border-slate-700/80 shadow-inner">
+          {/* ETA & Distance Hero Card */}
+          <div className="grid grid-cols-2 gap-2.5 bg-white/5 p-3 rounded-2xl border border-white/10 shadow-inner">
             <div className="flex flex-col">
-              <span className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                 <Clock className="w-3 h-3 text-amber-400" /> Arrival Time
               </span>
               <div className="flex items-baseline gap-1 mt-0.5">
                 {isLive ? (
                   <>
-                    <span className="text-xl md:text-3xl font-black text-white tracking-tight">~{etaMins}</span>
-                    <span className="text-xs md:text-sm font-bold text-amber-400">mins</span>
+                    <span className="text-2xl font-black text-white tracking-tight">~{etaMins}</span>
+                    <span className="text-xs font-bold text-amber-400">mins</span>
                   </>
                 ) : (
-                  <span className="text-base md:text-2xl font-black text-amber-400 tracking-tight">At Depot</span>
+                  <span className="text-lg font-black text-amber-400 tracking-tight">At Depot</span>
                 )}
               </div>
             </div>
-            <div className="flex flex-col border-l border-slate-700 pl-2 md:pl-3">
-              <span className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+            <div className="flex flex-col border-l border-white/10 pl-2.5">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                 <Navigation className="w-3 h-3 text-red-400" /> Distance Away
               </span>
               <div className="flex items-baseline gap-1 mt-0.5">
                 {isLive ? (
                   <>
-                    <span className="text-xl md:text-3xl font-black text-white tracking-tight">{distanceKm}</span>
-                    <span className="text-xs md:text-sm font-bold text-red-400">km</span>
+                    <span className="text-2xl font-black text-white tracking-tight">{distanceKm}</span>
+                    <span className="text-xs font-bold text-red-400">km</span>
                   </>
                 ) : (
-                  <span className="text-base md:text-2xl font-black text-slate-300 tracking-tight">Stationary</span>
+                  <span className="text-lg font-black text-slate-300 tracking-tight">Stationary</span>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Live Speed & Upcoming Stop Micro-HUD */}
-          <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-300">
+          {/* Micro HUD */}
+          <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs text-slate-300">
             <div className="flex items-center gap-1.5">
               <span className="text-slate-400 font-semibold">Speed:</span>
               <span className="font-mono font-bold text-emerald-400">{liveBus?.speedKmh ? liveBus.speedKmh.toFixed(0) : 0} km/h</span>
             </div>
-            <div className="flex items-center gap-1.5 truncate max-w-[200px]">
+            <div className="flex items-center gap-1.5 truncate max-w-[190px]">
               <span className="text-slate-400 font-semibold">Next Stop:</span>
               <span className="font-bold text-white truncate">{liveBus?.upcomingStopName || data?.stop.name || 'MMU Campus'}</span>
             </div>
           </div>
         </div>
 
-        {/* Expanded Content (Scrollable on mobile when pulled up, always visible on desktop) */}
-        <div className={`p-4 space-y-4 flex-1 overflow-y-auto ${isDrawerExpanded ? 'block' : 'hidden md:block'}`}>
+        {/* Scrollable details */}
+        <div className="p-4 space-y-3.5 overflow-y-auto max-h-[calc(100vh-280px)]">
           {/* Digital Pass Card */}
-          <div className="bg-gradient-to-r from-red-950/50 to-slate-900 p-3.5 rounded-2xl border border-red-900/50 relative overflow-hidden shadow-lg">
-            <div className="flex items-center justify-between mb-2">
+          <div className="bg-gradient-to-r from-red-950/60 to-slate-900/80 p-3.5 rounded-2xl border border-red-500/30 relative overflow-hidden shadow-lg">
+            <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2">
                 <Ticket className="w-4 h-4 text-red-500" />
                 <span className="text-xs font-black text-white">MMU Digital Transit Pass</span>
@@ -306,7 +282,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
           </div>
 
           {/* Assigned Bus & Driver Quick Action Card */}
-          <div className="bg-slate-800/70 p-3.5 rounded-2xl border border-slate-700/70 space-y-3 shadow-md">
+          <div className="bg-white/5 p-3.5 rounded-2xl border border-white/10 space-y-3 shadow-md">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-500 flex-shrink-0">
@@ -315,7 +291,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                 <div>
                   <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
                     {data?.bus.busNumber}
-                    <span className="text-[10px] bg-slate-700 text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] bg-white/10 text-slate-300 font-mono px-1.5 py-0.5 rounded border border-white/10">
                       {data?.bus.registrationNumber}
                     </span>
                   </h4>
@@ -324,7 +300,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-700/60">
+            <div className="flex items-center justify-between pt-2 border-t border-white/10">
               <div>
                 <p className="text-[9px] text-slate-400 uppercase font-semibold">Assigned Driver</p>
                 <p className="text-xs font-bold text-white">{data?.bus.assignedDriverName}</p>
@@ -340,7 +316,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
           </div>
 
           {/* Stoppage Waypoint Sequence */}
-          <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/50 space-y-2">
+          <div className="bg-white/5 p-3 rounded-2xl border border-white/10 space-y-2">
             <div className="flex items-center justify-between mb-1">
               <h5 className="text-[11px] font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-amber-400" /> Route Stoppages
@@ -348,7 +324,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               <span className="text-[10px] text-slate-400">{data?.route.stops.length} Stops</span>
             </div>
 
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
               {data?.route.stops.map((stop) => {
                 const isMyStop = stop.id === data.stop.id;
                 return (
@@ -357,11 +333,11 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                     className={`flex items-center justify-between p-2 rounded-xl text-xs transition-all ${
                       isMyStop
                         ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold'
-                        : 'text-slate-300 hover:bg-slate-800/50'
+                        : 'text-slate-300 hover:bg-white/5'
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${isMyStop ? 'bg-amber-500 text-slate-950' : 'bg-slate-700 text-slate-300'}`}>
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${isMyStop ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
                         {stop.stopSequence}
                       </span>
                       <span className="truncate">{stop.name}</span>
@@ -380,18 +356,181 @@ export const StudentView: React.FC<StudentViewProps> = () => {
           {/* Audio & Geofence Simulator Test Button */}
           <button
             onClick={triggerTestGeofence}
-            className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 border border-slate-600 text-xs font-bold text-slate-200 transition-all shadow-md active:scale-98"
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/15 text-xs font-bold text-slate-200 transition-all shadow-md active:scale-98"
           >
             <Sparkles className="w-4 h-4 text-amber-400" />
             <span>Test 1km Geofence Alert Sound</span>
           </button>
+        </div>
+      </div>
 
-          {/* Institutional Helpline Footer */}
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 text-[10px] text-slate-400 flex items-center justify-between">
-            <span>Fleet Dispatch: <strong>+91-1731-274475</strong></span>
-            <span className="text-red-400 font-bold">1800 2740 240</span>
+      {/* 3. Mobile: Floating Frosted-Glass Bottom Sheet */}
+      <div
+        className={`md:hidden fixed inset-x-2 transition-all duration-300 ease-out z-30 pointer-events-auto bg-slate-950/90 backdrop-blur-3xl border border-white/15 shadow-[0_16px_50px_rgba(0,0,0,0.75)] rounded-3xl overflow-hidden flex flex-col ${
+          isDrawerExpanded
+            ? 'bottom-2 top-16 rounded-3xl'
+            : 'bottom-2 h-[142px]'
+        }`}
+        style={{ paddingBottom: 'max(0.4rem, env(safe-area-inset-bottom))' }}
+      >
+        {/* Mobile Drag Handle Bar */}
+        <div
+          onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
+          className="flex flex-col items-center pt-2 pb-1 cursor-pointer bg-slate-950/80 active:bg-slate-900 select-none"
+        >
+          <div className="w-12 h-1.5 bg-slate-600 rounded-full mb-1"></div>
+        </div>
+
+        {/* Live Transit Peek Header */}
+        <div className="px-3.5 py-1.5 bg-gradient-to-br from-slate-900/90 to-slate-950/90 flex-shrink-0">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              {isLive ? (
+                <>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-[10px] font-bold tracking-wider text-emerald-400 uppercase">Live Telemetry</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  <span className="text-[10px] font-bold tracking-wider text-amber-300 uppercase">Bus Parked</span>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-mono bg-white/10 text-slate-300 px-2 py-0.5 rounded-full border border-white/10">
+                {data?.route.routeCode || 'AMB-01'}
+              </span>
+              <button
+                onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
+                className="p-1 rounded-lg bg-white/10 text-slate-200 flex items-center gap-1 text-[10px] px-2 font-bold"
+              >
+                <span>{isDrawerExpanded ? 'Close' : 'Details'}</span>
+                {isDrawerExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+              </button>
+            </div>
+          </div>
+
+          {/* ETA & Distance Hero Card */}
+          <div className="grid grid-cols-2 gap-2 bg-white/5 p-2 rounded-2xl border border-white/10 shadow-inner">
+            <div className="flex flex-col">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                <Clock className="w-3 h-3 text-amber-400" /> Arrival Time
+              </span>
+              <div className="flex items-baseline gap-1 mt-0.5">
+                {isLive ? (
+                  <>
+                    <span className="text-xl font-black text-white tracking-tight">~{etaMins}</span>
+                    <span className="text-xs font-bold text-amber-400">mins</span>
+                  </>
+                ) : (
+                  <span className="text-base font-black text-amber-400 tracking-tight">At Depot</span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col border-l border-white/10 pl-2">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                <Navigation className="w-3 h-3 text-red-400" /> Distance Away
+              </span>
+              <div className="flex items-baseline gap-1 mt-0.5">
+                {isLive ? (
+                  <>
+                    <span className="text-xl font-black text-white tracking-tight">{distanceKm}</span>
+                    <span className="text-xs font-bold text-red-400">km</span>
+                  </>
+                ) : (
+                  <span className="text-base font-black text-slate-300 tracking-tight">Stationary</span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* Expanded Drawer Content (Visible when pulled up) */}
+        {isDrawerExpanded && (
+          <div className="p-3.5 space-y-3 flex-1 overflow-y-auto">
+            {/* Digital Pass Card */}
+            <div className="bg-gradient-to-r from-red-950/60 to-slate-900/80 p-3 rounded-2xl border border-red-500/30">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <Ticket className="w-3.5 h-3.5 text-red-500" />
+                  <span className="text-xs font-black text-white">MMU Digital Transit Pass</span>
+                </div>
+                <span className="text-[9px] font-black bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  {data?.allocation.feeStatus || 'VERIFIED PAID'}
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-300">
+                Pass: <strong className="text-white font-mono">{data?.allocation.passNumber}</strong> • Seat: <strong className="text-amber-400">{data?.allocation.seatNumber || 'Free'}</strong>
+              </div>
+            </div>
+
+            {/* Assigned Bus & Driver Card */}
+            <div className="bg-white/5 p-3 rounded-2xl border border-white/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-500 flex-shrink-0">
+                    <Bus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      {data?.bus.busNumber}
+                      <span className="text-[9px] bg-white/10 text-slate-300 font-mono px-1 py-0.5 rounded">
+                        {data?.bus.registrationNumber}
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-400">Cap: {data?.bus.capacity} Seats • AC</p>
+                  </div>
+                </div>
+                <a
+                  href={`tel:${data?.bus.assignedDriverPhone}`}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md"
+                >
+                  <Phone className="w-3 h-3" />
+                  <span>Call</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Stoppages */}
+            <div className="bg-white/5 p-3 rounded-2xl border border-white/10 space-y-2">
+              <div className="flex items-center justify-between mb-1">
+                <h5 className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <MapPin className="w-3 h-3 text-amber-400" /> Route Stoppages
+                </h5>
+                <span className="text-[10px] text-slate-400">{data?.route.stops.length} Stops</span>
+              </div>
+              <div className="space-y-1 max-h-36 overflow-y-auto">
+                {data?.route.stops.map((stop) => {
+                  const isMyStop = stop.id === data.stop.id;
+                  return (
+                    <div
+                      key={stop.id}
+                      className={`flex items-center justify-between p-1.5 rounded-lg text-xs ${
+                        isMyStop ? 'bg-amber-500/20 text-amber-300 font-bold' : 'text-slate-300'
+                      }`}
+                    >
+                      <span className="truncate">{stop.stopSequence}. {stop.name}</span>
+                      {isMyStop && <span className="text-[9px] bg-amber-500 text-slate-950 px-1 py-0.2 rounded font-black">MY STOP</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Geofence Test */}
+            <button
+              onClick={triggerTestGeofence}
+              className="w-full py-2 rounded-xl bg-white/10 border border-white/10 text-xs font-bold text-slate-200 flex items-center justify-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Test 1km Geofence Alert Sound</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

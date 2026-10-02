@@ -71,7 +71,7 @@ export const App: React.FC = () => {
       />
 
       {/* Active Role Viewport */}
-      <main className="flex-1 w-full relative overflow-hidden pb-16 md:pb-0">
+      <main className={`flex-1 w-full relative overflow-hidden ${activeRoleView === 'STUDENT' ? 'pb-0' : 'pb-16 md:pb-0'}`}>
         {activeRoleView === 'STUDENT' && <StudentView onOpenAuth={() => setIsAuthOpen(true)} />}
         {activeRoleView === 'DRIVER' && <DriverConsole />}
         {activeRoleView === 'ADMIN' && <AdminDashboard />}

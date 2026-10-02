@@ -1,5 +1,20 @@
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { User, Bus, Route, RouteStop, StudentAllocation } from '../types/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+let bakedRoutes: Record<string, [number, number][]> = {};
+try {
+  const jsonPath = path.resolve(__dirname, 'baked-routes.json');
+  if (fs.existsSync(jsonPath)) {
+    bakedRoutes = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+  }
+} catch {
+  /* fallback */
+}
 
 // Pre-hashed password for demo accounts ("MMU@Secure2026")
 const DEFAULT_HASH = bcrypt.hashSync('MMU@Secure2026', 10);
@@ -278,7 +293,7 @@ export const SEED_ROUTES: Route[] = [
         isMajorHub: true,
       },
     ],
-    waypoints: [
+    waypoints: bakedRoutes['route-amb-01'] || [
       [76.83756, 30.33268],
       [76.83312, 30.34125],
       [76.85243, 30.32981],
@@ -403,7 +418,7 @@ export const SEED_ROUTES: Route[] = [
         isMajorHub: true,
       },
     ],
-    waypoints: [
+    waypoints: bakedRoutes['route-ynr-02'] || [
       [77.28890, 30.13420],
       [77.29810, 30.16540],
       [77.27980, 30.15810],

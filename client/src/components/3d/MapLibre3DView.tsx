@@ -5,6 +5,7 @@ import { Route, RouteStop, LiveBusState } from '../../types/index.js';
 import { VehicleLerpEngine } from './VehicleLerpEngine.js';
 import { api } from '../../services/api.js';
 import { getRoadSnappedPath } from '../../services/roadRouter.js';
+import bakedRoutesData from '../../services/baked-routes.json';
 import {
   Navigation,
   Layers,
@@ -18,10 +19,14 @@ import {
   Milestone,
   AlertCircle,
   X,
+  Gauge,
+  Activity,
 } from 'lucide-react';
 
-export type MapStyleType = 'GOOGLE_MAPS' | 'GOOGLE_SATELLITE' | 'DARK_COCKPIT';
-export type BuildingViewMode = 'GLASS' | 'SOLID' | 'OFF';
+const bakedRoutes = bakedRoutesData as unknown as Record<string, [number, number][]>;
+
+export type MapStyleType = 'GOOGLE_ROADMAP' | 'GOOGLE_SATELLITE' | 'GOOGLE_3D' | 'DARK_COCKPIT';
+export type BuildingViewMode = 'SOLID' | 'GLASS' | 'OFF';
 
 // Genuine Official Google Maps Roadmap Specification
 const GOOGLE_ROADMAP_SPEC: maplibregl.StyleSpecification = {
@@ -90,12 +95,8 @@ interface MapLibre3DViewProps {
 }
 
 const DEFAULT_CENTER: [number, number] = [77.04505, 30.25045]; // MMU Mullana Campus
-const PITCH_3D = 60; // Google Maps style immersion: 55-65deg
+const PITCH_3D = 60; // Google Maps 3D immersion perspective: 60deg
 const PITCH_FLAT = 0;
-
-// Campus building footprints: Shrunk to real plots so corridors and Stop 8 stay 100% open
-const MMU_FOOTPRINT_SHRINK = 0.30;
-const MMU_MAX_HEIGHT_M = 10;
 
 interface UserGeoState {
   coords: [number, number];
@@ -104,47 +105,10 @@ interface UserGeoState {
   label: string;
 }
 
-type LngLatRing = number[][];
-
-const shrinkRing = (ring: LngLatRing, cx: number, cy: number, k: number): LngLatRing =>
-  ring.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k]);
-
+// Preserve ground-truth architectural building scale with clean boundary rendering
 const fitMmuBuildings = (fc: any): any => {
   if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) return fc;
-  return {
-    ...fc,
-    features: fc.features.map((f: any) => {
-      if (!f?.geometry || (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon')) return f;
-      const polys: number[][][][] =
-        f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      polys.forEach((poly) =>
-        poly.forEach((ring) =>
-          ring.forEach(([x, y]) => {
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-          })
-        )
-      );
-      if (!isFinite(minX)) return f;
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
-      const shrunk = polys.map((poly) => poly.map((ring) => shrinkRing(ring, cx, cy, MMU_FOOTPRINT_SHRINK)));
-      return {
-        ...f,
-        properties: {
-          ...f.properties,
-          height: Math.min(Number(f.properties?.height) || 14, MMU_MAX_HEIGHT_M),
-        },
-        geometry: {
-          ...f.geometry,
-          coordinates: f.geometry.type === 'Polygon' ? shrunk[0] : shrunk,
-        },
-      };
-    }),
-  };
+  return fc;
 };
 
 function isBusLive(bus?: LiveBusState | null): boolean {
@@ -170,8 +134,8 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   const lerpEngineRef = useRef<VehicleLerpEngine | null>(null);
   const buildingDataRef = useRef<any>(null);
 
-  const [mapStyle, setMapStyle] = useState<MapStyleType>('GOOGLE_MAPS');
-  const [buildingMode, setBuildingMode] = useState<BuildingViewMode>('GLASS');
+  const [mapStyle, setMapStyle] = useState<MapStyleType>('GOOGLE_ROADMAP');
+  const [buildingMode, setBuildingMode] = useState<BuildingViewMode>('SOLID');
   const [userGeo, setUserGeo] = useState<UserGeoState | null>(null);
   const [geoNotice, setGeoNotice] = useState<{
     type: 'REMOTE_IP' | 'LOCATED';
@@ -185,8 +149,11 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   const [mapLoaded, setMapLoaded] = useState<boolean>(false);
   const [currentSpeed, setCurrentSpeed] = useState<number>(0);
   const [currentBearing, setCurrentBearing] = useState<number>(0);
-  // Road-snapped corridor geometry (OSRM). Null = still resolving / failed.
-  const [roadPath, setRoadPath] = useState<[number, number][] | null>(null);
+  // Instant baked street-snapped coordinates (0ms latency, zero drift off NH-344)
+  const [roadPath, setRoadPath] = useState<[number, number][] | null>(() => {
+    if (activeRoute && bakedRoutes[activeRoute.id]) return bakedRoutes[activeRoute.id];
+    return null;
+  });
 
   // Set user location puck directly to chosen coordinates (e.g. stop or campus)
   const setUserLocationToCoords = useCallback((coords: [number, number], title: string) => {
@@ -285,8 +252,8 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     setBuildingMode(next);
     const map = mapRef.current;
     if (!map) return;
-    const osmOpacity = next === 'GLASS' ? 0.22 : next === 'SOLID' ? 0.85 : 0;
-    const mmuOpacity = next === 'GLASS' ? 0.28 : next === 'SOLID' ? 0.85 : 0;
+    const osmOpacity = next === 'GLASS' ? 0.22 : next === 'SOLID' ? 0.88 : 0;
+    const mmuOpacity = next === 'GLASS' ? 0.28 : next === 'SOLID' ? 0.95 : 0;
     if (map.getLayer('3d-buildings-osm')) {
       map.setPaintProperty('3d-buildings-osm', 'fill-extrusion-opacity', osmOpacity);
     }
@@ -295,12 +262,19 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }
   };
 
-  // Resolve the active corridor to real road geometry. Never blocks render:
-  // the raw waypoints draw first, then upgrade to the snapped path on arrival.
+  // Resolve the active corridor to real road geometry.
+  // Immediate synchronous lookup from baked routes, or graceful OSRM network fetch.
   useEffect(() => {
-    setRoadPath(null);
-    if (!activeRoute || activeRoute.stops.length < 2) return;
+    if (!activeRoute) {
+      setRoadPath(null);
+      return;
+    }
     const routeId = activeRoute.id;
+    if (bakedRoutes[routeId] && bakedRoutes[routeId].length > 1) {
+      setRoadPath(bakedRoutes[routeId]);
+      return;
+    }
+    if (activeRoute.stops.length < 2) return;
     const ctrl = new AbortController();
     const timeout = window.setTimeout(() => ctrl.abort(), 12000);
     let live = true;
@@ -315,9 +289,11 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   }, [activeRoute]);
 
   const getStyleConfig = useCallback((style: MapStyleType): any => {
-    if (style === 'GOOGLE_MAPS') return GOOGLE_ROADMAP_SPEC;
+    if (style === 'GOOGLE_ROADMAP') return GOOGLE_ROADMAP_SPEC;
     if (style === 'GOOGLE_SATELLITE') return GOOGLE_SATELLITE_SPEC;
-    return 'https://tiles.openfreemap.org/styles/positron';
+    if (style === 'GOOGLE_3D') return 'https://tiles.openfreemap.org/styles/liberty';
+    if (style === 'DARK_COCKPIT') return 'https://tiles.openfreemap.org/styles/dark';
+    return GOOGLE_ROADMAP_SPEC;
   }, []);
 
   // Prefetch campus building GeoJSON once
@@ -332,12 +308,12 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
   const applySunLighting = useCallback((map: maplibregl.Map) => {
     // Ambient + directional sun tuned for Ambala latitude (~30.25N).
-    // Soft shadows across campus buildings & adjacent shops.
+    // Rich cast shadows across 3D solid structures
     try {
       map.setLight({
         anchor: 'viewport',
-        color: '#FFF6E8',
-        intensity: 0.62,
+        color: '#FFF8EB',
+        intensity: 0.85,
         position: [1.35, 195, 42],
       });
     } catch {
@@ -353,11 +329,10 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           (l: any) => l.type === 'symbol' && l.layout?.['text-field']
         )?.id;
 
-        const osmOpacity = buildingMode === 'GLASS' ? 0.22 : buildingMode === 'SOLID' ? 0.85 : 0;
-        const mmuOpacity = buildingMode === 'GLASS' ? 0.28 : buildingMode === 'SOLID' ? 0.85 : 0;
+        const osmOpacity = buildingMode === 'GLASS' ? 0.22 : buildingMode === 'SOLID' ? 0.88 : 0;
+        const mmuOpacity = buildingMode === 'GLASS' ? 0.28 : buildingMode === 'SOLID' ? 0.95 : 0;
 
         // 1. OSM / Mapbox-Streets style vector buildings -> 3D extrusions.
-        // Default opacity is GLASS: 0.22, so roads and turns are completely visible
         if (map.getSource('openmaptiles') && !map.getLayer('3d-buildings-osm')) {
           map.addLayer(
             {
@@ -370,7 +345,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 'fill-extrusion-color': [
                   'interpolate',
                   ['linear'],
-                  ['coalesce', ['get', 'render_height'], ['get', 'height'], 10],
+                  ['coalesce', ['get', 'render_height'], ['get', 'height'], 12],
                   0,
                   '#cbd5e1',
                   18,
@@ -385,7 +360,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                   14,
                   0,
                   14.08,
-                  ['coalesce', ['get', 'render_height'], ['get', 'height'], 12],
+                  ['coalesce', ['get', 'render_height'], ['get', 'height'], 14],
                 ],
                 'fill-extrusion-base': [
                   'interpolate',
@@ -404,9 +379,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           );
         }
 
-        // 2. MMU campus high-fidelity extrusions (hospital, hostels, MMEC...)
-        // Footprints are shrunk to the real plots so boxes never cover roads,
-        // and rendered in translucent glass so Stop 8 terminal stays visible.
+        // 2. MMU campus high-fidelity architectural extrusions (MMIMSR Hospital, MMEC Labs, Admin...)
         if (geoJson) {
           const fitted = fitMmuBuildings(geoJson);
           if (map.getSource('mmu-buildings-source')) {
@@ -418,10 +391,10 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 id: 'mmu-3d-buildings',
                 type: 'fill-extrusion',
                 source: 'mmu-buildings-source',
-                minzoom: 15,
+                minzoom: 14,
                 paint: {
                   'fill-extrusion-color': ['coalesce', ['get', 'color'], '#dc2626'],
-                  'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
+                  'fill-extrusion-height': ['coalesce', ['get', 'height'], 20],
                   'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
                   'fill-extrusion-opacity': mmuOpacity,
                   'fill-extrusion-vertical-gradient': true,
@@ -446,7 +419,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: getStyleConfig('GOOGLE_MAPS'),
+      style: getStyleConfig('GOOGLE_ROADMAP'),
       center: DEFAULT_CENTER,
       zoom: 16.1,
       pitch: PITCH_3D,
@@ -905,20 +878,24 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         <div className="flex md:hidden items-center bg-slate-900/95 backdrop-blur-xl p-1 rounded-xl border border-slate-700/80 shadow-2xl gap-1">
           <button
             onClick={() => {
-              const next = mapStyle === 'GOOGLE_MAPS' ? 'GOOGLE_SATELLITE' : mapStyle === 'GOOGLE_SATELLITE' ? 'DARK_COCKPIT' : 'GOOGLE_MAPS';
+              const cycle: MapStyleType[] = ['GOOGLE_ROADMAP', 'GOOGLE_SATELLITE', 'GOOGLE_3D', 'DARK_COCKPIT'];
+              const idx = cycle.indexOf(mapStyle);
+              const next = cycle[(idx + 1) % cycle.length];
               handleStyleChange(next);
             }}
-            className={`p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
-              mapStyle === 'GOOGLE_MAPS'
-                ? 'bg-blue-600 text-white'
-                : mapStyle === 'GOOGLE_SATELLITE'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-red-600 text-white'
-            }`}
-            title="Switch Map (Google Maps / Satellite / Dark)"
+            className="p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all bg-blue-600 text-white"
+            title="Switch Map (Google / Satellite / 3D Vector / Dark)"
           >
-            {mapStyle === 'GOOGLE_MAPS' ? <MapIcon className="w-3.5 h-3.5" /> : mapStyle === 'GOOGLE_SATELLITE' ? <Globe className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-            <span className="text-[10px]">{mapStyle === 'GOOGLE_MAPS' ? 'Google' : mapStyle === 'GOOGLE_SATELLITE' ? 'Sat' : 'Dark'}</span>
+            <MapIcon className="w-3.5 h-3.5" />
+            <span className="text-[10px]">
+              {mapStyle === 'GOOGLE_ROADMAP'
+                ? 'Roadmap'
+                : mapStyle === 'GOOGLE_SATELLITE'
+                ? 'Satellite'
+                : mapStyle === 'GOOGLE_3D'
+                ? '3D Vector'
+                : 'Dark'}
+            </span>
           </button>
           <button
             onClick={() => {
@@ -926,16 +903,16 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
               handleBuildingModeChange(next);
             }}
             className={`p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
-              buildingMode === 'GLASS'
-                ? 'bg-blue-600 text-white'
-                : buildingMode === 'SOLID'
+              buildingMode === 'SOLID'
                 ? 'bg-amber-600 text-white'
+                : buildingMode === 'GLASS'
+                ? 'bg-blue-600 text-white'
                 : 'bg-slate-800 text-slate-300'
             }`}
-            title="3D Building Mode: Glass / Solid / Off"
+            title="3D Building Mode: Solid / Glass / Off"
           >
             <Building2 className="w-3.5 h-3.5" />
-            <span className="text-[10px]">{buildingMode === 'GLASS' ? 'Glass' : buildingMode === 'SOLID' ? 'Solid' : 'Off'}</span>
+            <span className="text-[10px]">{buildingMode === 'SOLID' ? 'Solid 3D' : buildingMode === 'GLASS' ? 'Glass' : 'Off'}</span>
           </button>
           <button
             onClick={toggle3DMode}
@@ -973,25 +950,32 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         <div className="hidden md:flex items-center bg-slate-900/90 backdrop-blur-xl p-1 rounded-2xl border border-slate-700 shadow-2xl gap-1">
           <button
-            onClick={() => handleStyleChange('GOOGLE_MAPS')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_MAPS' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+            onClick={() => handleStyleChange('GOOGLE_ROADMAP')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_ROADMAP' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
           >
             <MapIcon className="w-3.5 h-3.5" />
-            <span>Google Maps</span>
+            <span>Google Roadmap</span>
           </button>
           <button
             onClick={() => handleStyleChange('GOOGLE_SATELLITE')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_SATELLITE' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
           >
             <Globe className="w-3.5 h-3.5" />
-            <span>Satellite</span>
+            <span>Google Satellite</span>
+          </button>
+          <button
+            onClick={() => handleStyleChange('GOOGLE_3D')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_3D' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>3D Vector</span>
           </button>
           <button
             onClick={() => handleStyleChange('DARK_COCKPIT')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'DARK_COCKPIT' ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
           >
             <Moon className="w-3.5 h-3.5" />
-            <span>Dark</span>
+            <span>Cockpit Dark</span>
           </button>
         </div>
 
@@ -1002,16 +986,16 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
               handleBuildingModeChange(next);
             }}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-xl backdrop-blur-md border ${
-              buildingMode === 'GLASS'
-                ? 'bg-blue-600/90 text-white border-blue-400'
-                : buildingMode === 'SOLID'
+              buildingMode === 'SOLID'
                 ? 'bg-amber-600/90 text-white border-amber-400'
+                : buildingMode === 'GLASS'
+                ? 'bg-blue-600/90 text-white border-blue-400'
                 : 'bg-slate-900/90 text-slate-300 border-slate-700 hover:bg-slate-800'
             }`}
-            title="3D Building Visibility: Glass (Roads Clear) / Solid / Off"
+            title="3D Building Visibility: Solid 3D / Glass / Off"
           >
             <Building2 className="w-3.5 h-3.5" />
-            <span>{buildingMode === 'GLASS' ? '3D Glass (Roads Clear)' : buildingMode === 'SOLID' ? '3D Solid' : 'Buildings Off'}</span>
+            <span>{buildingMode === 'SOLID' ? 'Solid 3D Buildings' : buildingMode === 'GLASS' ? 'Glass 3D' : 'Buildings Off'}</span>
           </button>
           <button
             onClick={toggle3DMode}
@@ -1053,23 +1037,78 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         </div>
       </div>
 
-      <div className="absolute bottom-40 md:bottom-4 left-2.5 md:left-4 z-20 flex items-center gap-2 md:gap-3 pointer-events-auto">
-        <div className="flex items-center gap-1.5 md:gap-2 bg-slate-900/95 backdrop-blur-xl px-2.5 py-1.5 md:px-3.5 md:py-2 rounded-xl md:rounded-2xl border border-slate-700/80 shadow-2xl">
-          <div className={`w-6 h-6 md:w-8 md:h-8 rounded-full border-2 ${live ? 'border-emerald-400' : 'border-slate-600'} flex items-center justify-center font-mono font-black text-[10px] md:text-xs text-white`}>
-            {currentSpeed.toFixed(0)}
+      {/* 4. High-Precision Real-Time Speedometer & Telemetry Cockpit HUD */}
+      <div className="absolute bottom-40 md:bottom-5 left-3 md:left-5 z-20 flex items-center gap-3 pointer-events-auto select-none">
+        <div className="flex items-center gap-3 md:gap-3.5 bg-slate-950/85 backdrop-blur-2xl p-2.5 md:p-3 rounded-2xl md:rounded-3xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+          {/* Radial Circular Speedometer Gauge */}
+          <div className="relative w-14 h-14 md:w-16 md:h-16 flex items-center justify-center flex-shrink-0">
+            <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 80 80">
+              {/* Background Arc */}
+              <circle
+                cx="40"
+                cy="40"
+                r="33"
+                stroke="currentColor"
+                strokeWidth="6"
+                className="text-slate-800"
+                fill="transparent"
+                strokeDasharray="207.3"
+                strokeDashoffset="51.8"
+                strokeLinecap="round"
+              />
+              {/* Animated Progress Arc */}
+              <circle
+                cx="40"
+                cy="40"
+                r="33"
+                stroke="currentColor"
+                strokeWidth="6"
+                className={`transition-all duration-300 ease-out ${
+                  !live
+                    ? 'text-slate-600'
+                    : currentSpeed > 60
+                    ? 'text-red-500'
+                    : currentSpeed > 40
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}
+                fill="transparent"
+                strokeDasharray="207.3"
+                strokeDashoffset={207.3 - (Math.min(1, currentSpeed / 80) * 155.5)}
+                strokeLinecap="round"
+                style={{
+                  filter: live && currentSpeed > 0 ? 'drop-shadow(0 0 6px currentColor)' : 'none',
+                }}
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+              <span className="font-mono font-black text-base md:text-lg text-white tracking-tighter leading-none">
+                {currentSpeed.toFixed(0)}
+              </span>
+              <span className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mt-0.5">
+                km/h
+              </span>
+            </div>
           </div>
-          <div>
-            <div className="hidden md:block text-[10px] uppercase font-bold text-slate-400">Ground Speed</div>
-            <div className={`text-[11px] md:text-xs font-black ${live ? 'text-emerald-400' : 'text-slate-400'}`}>km/h{live ? '' : ' · Parked'}</div>
+
+          {/* Telemetry Metrics & Heading */}
+          <div className="flex flex-col pr-1">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className={`w-2 h-2 rounded-full ${live ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="text-[10px] md:text-xs font-black tracking-wider uppercase text-slate-200">
+                {live ? 'Live GPS Telemetry' : 'Parked at Depot'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center gap-1 bg-slate-900/90 px-2 py-0.5 rounded-lg border border-slate-800 text-slate-300 font-mono text-[10px] md:text-[11px]">
+                <Compass className="w-3 h-3 text-red-500" style={{ transform: `rotate(${currentBearing}deg)` }} />
+                <span>{currentBearing}°</span>
+              </div>
+              <span className="text-[9px] md:text-[10px] text-slate-400 font-mono">
+                {live ? '±3.5m GNSS' : 'NH-344'}
+              </span>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-1.5 md:gap-2 bg-slate-900/95 backdrop-blur-xl px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl md:rounded-2xl border border-slate-700/80 shadow-2xl">
-          <Compass className="w-3.5 h-3.5 md:w-4 md:h-4 text-red-500" />
-          <span className="text-[11px] md:text-xs font-mono font-extrabold text-slate-200">{currentBearing}°</span>
-        </div>
-        <div className="hidden lg:flex items-center gap-2 bg-slate-900/95 backdrop-blur-xl px-3 py-2 rounded-2xl border border-slate-700 text-xs text-slate-300 shadow-2xl">
-          <span className={`w-2 h-2 rounded-full ${live ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-          <span>{live ? 'Live driver telemetry · 60fps lerp' : 'Parked · awaiting live driver telemetry'}</span>
         </div>
       </div>
     </div>

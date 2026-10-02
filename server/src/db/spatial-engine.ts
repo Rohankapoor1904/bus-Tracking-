@@ -103,14 +103,14 @@ function toDegrees(radians: number): number {
 }
 
 // ----------------------------------------------------------------------------
-// MMU Ground-Truth 3D Campus Building Polygons
+// MMU Ground-Truth Solid 3D Campus Building Architecture
 // ----------------------------------------------------------------------------
 export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
   {
     id: 'mmu-building-hospital-36',
     name: 'MM Institute of Medical Sciences & Teaching Hospital (Block 36)',
     blockCode: 'MMIMSR-36',
-    heightMeters: 14,
+    heightMeters: 28,
     minHeightMeters: 0,
     colorHex: '#0284C7',
     campus: 'MULLANA_MAIN',
@@ -128,9 +128,9 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-cardiac-34',
     name: 'Super-Specialty Cardiac & Cancer Pavilion (Block 34)',
     blockCode: 'SUPER-34',
-    heightMeters: 12,
+    heightMeters: 24,
     minHeightMeters: 0,
-    colorHex: '#38BDF8',
+    colorHex: '#0ea5e9',
     campus: 'MULLANA_MAIN',
     coordinates: [
       [
@@ -146,9 +146,9 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-admin-39',
     name: 'University Administrative Secretariat & Chancellor Office (Block 39)',
     blockCode: 'ADMIN-39',
-    heightMeters: 12,
+    heightMeters: 20,
     minHeightMeters: 0,
-    colorHex: '#E21E26',
+    colorHex: '#dc2626',
     campus: 'MULLANA_MAIN',
     coordinates: [
       [
@@ -164,7 +164,7 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-mmec-10-14',
     name: 'MM Engineering College Blocks 1, 2 & Central Labs (MMEC)',
     blockCode: 'MMEC-ENG',
-    heightMeters: 12,
+    heightMeters: 22,
     minHeightMeters: 0,
     colorHex: '#475569',
     campus: 'MULLANA_MAIN',
@@ -182,9 +182,9 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-auditorium-53',
     name: 'Central University Convention Center & Auditorium (Block 53)',
     blockCode: 'AUDIT-53',
-    heightMeters: 12,
+    heightMeters: 18,
     minHeightMeters: 0,
-    colorHex: '#F59E0B',
+    colorHex: '#f59e0b',
     campus: 'MULLANA_MAIN',
     coordinates: [
       [
@@ -200,9 +200,9 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-boys-hostel',
     name: 'Boys Residential Towers (BH-1, BH-5, BH-10)',
     blockCode: 'HOSTEL-BH',
-    heightMeters: 12,
+    heightMeters: 26,
     minHeightMeters: 0,
-    colorHex: '#3B82F6',
+    colorHex: '#2563eb',
     campus: 'MULLANA_MAIN',
     coordinates: [
       [
@@ -218,9 +218,9 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-girls-hostel',
     name: 'Girls Residential Towers (GH-3, GH-4, GH-6, GH-8)',
     blockCode: 'HOSTEL-GH',
-    heightMeters: 22,
+    heightMeters: 26,
     minHeightMeters: 0,
-    colorHex: '#8B5CF6',
+    colorHex: '#7c3aed',
     campus: 'MULLANA_MAIN',
     coordinates: [
       [
@@ -236,9 +236,9 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     id: 'mmu-building-stadium-32',
     name: 'MM International Sports Arena & Stadium Pavilion (Block 32)',
     blockCode: 'SPORTS-32',
-    heightMeters: 9,
+    heightMeters: 14,
     minHeightMeters: 0,
-    colorHex: '#10B981',
+    colorHex: '#10b981',
     campus: 'MULLANA_MAIN',
     coordinates: [
       [
@@ -251,12 +251,84 @@ export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
     ],
   },
   {
+    id: 'mmu-building-dental-21',
+    name: 'MM College of Dental Sciences & Hospital (Block 21)',
+    blockCode: 'DENTAL-21',
+    heightMeters: 22,
+    minHeightMeters: 0,
+    colorHex: '#06b6d4',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04890, 30.24980],
+        [77.04960, 30.24980],
+        [77.04960, 30.24910],
+        [77.04890, 30.24910],
+        [77.04890, 30.24980],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-library-12',
+    name: 'Central University Library & Knowledge Hub (Block 12)',
+    blockCode: 'LIB-12',
+    heightMeters: 18,
+    minHeightMeters: 0,
+    colorHex: '#d97706',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04520, 30.24980],
+        [77.04590, 30.24980],
+        [77.04590, 30.24910],
+        [77.04520, 30.24910],
+        [77.04520, 30.24980],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-nursing-18',
+    name: 'MM College of Nursing & Paramedical Institute',
+    blockCode: 'NURS-18',
+    heightMeters: 20,
+    minHeightMeters: 0,
+    colorHex: '#059669',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04720, 30.25250],
+        [77.04800, 30.25250],
+        [77.04800, 30.25180],
+        [77.04720, 30.25180],
+        [77.04720, 30.25250],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-food-plaza',
+    name: 'Central Food Plaza, Nescafe Square & Student Amenities',
+    blockCode: 'PLAZA-HUB',
+    heightMeters: 10,
+    minHeightMeters: 0,
+    colorHex: '#e11d48',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04410, 30.25050],
+        [77.04490, 30.25050],
+        [77.04490, 30.24990],
+        [77.04410, 30.24990],
+        [77.04410, 30.25050],
+      ],
+    ],
+  },
+  {
     id: 'mmu-building-sadopur-main',
     name: 'MMU Sadopur Academic Block & Campus Center',
     blockCode: 'SADOPUR-MAIN',
-    heightMeters: 20,
+    heightMeters: 22,
     minHeightMeters: 0,
-    colorHex: '#E21E26',
+    colorHex: '#dc2626',
     campus: 'SADOPUR_AMBALA',
     coordinates: [
       [
