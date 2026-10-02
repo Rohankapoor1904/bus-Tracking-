@@ -1,8 +1,9 @@
+import { getServerHost } from './api.js';
+
 type EventCallback = (data: any) => void;
 
 class RealTimeSocketService {
   private ws: WebSocket | null = null;
-  private url = 'ws://localhost:4000/ws';
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 20;
   private reconnectIntervalMs = 2000;
@@ -10,12 +11,18 @@ class RealTimeSocketService {
   private pendingSubscriptions: Set<string> = new Set();
   private isConnected = false;
 
+  private getWsUrl(): string {
+    const host = getServerHost().replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${host}/ws`;
+  }
+
   public connect(token?: string, routeId?: string) {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    let connectUrl = this.url;
+    let connectUrl = this.getWsUrl();
     const params = new URLSearchParams();
     if (token) params.set('token', token);
     if (routeId) params.set('routeId', routeId);

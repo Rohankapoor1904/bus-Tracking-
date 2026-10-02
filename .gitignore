@@ -40,3 +40,13 @@ scratch/
 tmp/
 temp/
 .eslintcache
+
+# Android Build Outputs
+.gradle/
+client/android/.gradle/
+client/android/build/
+client/android/app/build/
+client/android/local.properties
+client/android/capacitor-cordova-android-plugins/build/
+*.apk
+

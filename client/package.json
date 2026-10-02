@@ -6,10 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "cap:sync": "cap sync android",
+    "build:apk": "npm run build && cap sync android && cd android && gradlew.bat assembleDebug",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.16.0",
     "maplibre-gl": "^4.7.1",

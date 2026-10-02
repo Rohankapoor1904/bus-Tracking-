@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import {
   User,
   Route,
@@ -7,7 +8,23 @@ import {
   FleetOverviewMetrics,
 } from '../types/index.js';
 
-const API_BASE = 'http://localhost:4000/api/v1';
+export function getServerHost(): string {
+  const saved = localStorage.getItem('mmu_server_host');
+  if (saved) return saved;
+  if (Capacitor.isNativePlatform()) {
+    // Default to dev PC IP address over Wi-Fi when running native Android APK
+    return '192.168.1.12:4000';
+  }
+  const host = window.location.hostname || 'localhost';
+  return `${host}:4000`;
+}
+
+export function getApiBase(): string {
+  const host = getServerHost();
+  const protocol = host.startsWith('https') ? 'https' : 'http';
+  const cleanHost = host.replace(/^https?:\/\//, '');
+  return `${protocol}://${cleanHost}/api/v1`;
+}
 
 class ApiService {
   private token: string | null = null;
@@ -39,7 +56,7 @@ class ApiService {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const response = await fetch(`${getApiBase()}${endpoint}`, {
       ...options,
       headers,
     });
@@ -77,7 +94,7 @@ class ApiService {
   }
 
   public async getCampusBuildingsGeoJson(): Promise<any> {
-    const res = await fetch(`${API_BASE}/routes/campus-buildings`);
+    const res = await fetch(`${getApiBase()}/routes/campus-buildings`);
     return res.json();
   }
 

@@ -10,6 +10,7 @@
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"bgBlue.bold,bgRed.bold\" \"npm run dev:server\" \"npm run dev:client\"",
     "build:server": "npm --prefix server run build",
     "build:client": "npm --prefix client run build",
+    "build:apk": "npm --prefix client run build:apk",
     "test": "npm --prefix server test"
   },
   "devDependencies": {
