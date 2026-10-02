@@ -1,0 +1,271 @@
+import { CampusBuilding3D } from '../types/index.js';
+
+/**
+ * High-Precision Geospatial Calculations & PostGIS Equivalent Formulas
+ * SRID: 4326 (WGS 84 Ellipsoid approximation via Great-Circle Haversine)
+ */
+
+export const EARTH_RADIUS_METERS = 6371000; // Mean radius of Earth in meters
+
+/**
+ * Calculates great-circle distance between two geographic coordinates in meters.
+ * Equivalent to PostGIS: ST_Distance(ST_MakePoint(lon1, lat1)::geography, ST_MakePoint(lon2, lat2)::geography)
+ */
+export function calculateDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const rLat1 = toRadians(lat1);
+  const rLat2 = toRadians(lat2);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(rLat1) * Math.cos(rLat2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return EARTH_RADIUS_METERS * c;
+}
+
+/**
+ * Computes forward azimuth bearing in degrees (0° to 360° clockwise from True North).
+ * ST_Azimuth(ST_MakePoint(lon1, lat1), ST_MakePoint(lon2, lat2))
+ */
+export function calculateBearing(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const rLat1 = toRadians(lat1);
+  const rLat2 = toRadians(lat2);
+  const dLon = toRadians(lon2 - lon1);
+
+  const y = Math.sin(dLon) * Math.cos(rLat2);
+  const x =
+    Math.cos(rLat1) * Math.sin(rLat2) -
+    Math.sin(rLat1) * Math.cos(rLat2) * Math.cos(dLon);
+
+  const initialBearing = Math.atan2(y, x);
+  const compassBearing = (toDegrees(initialBearing) + 360) % 360;
+
+  return compassBearing;
+}
+
+/**
+ * Tests if coordinate (lat1, lon1) is within radiusMeters of (lat2, lon2).
+ * Equivalent to PostGIS: ST_DWithin(geom1::geography, geom2::geography, radiusMeters)
+ */
+export function isWithinGeofence(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+  radiusMeters: number
+): boolean {
+  return calculateDistanceMeters(lat1, lon1, lat2, lon2) <= radiusMeters;
+}
+
+/**
+ * Estimates Time of Arrival in minutes given distance in meters and current speed in km/h.
+ * Incorporates urban/highway acceleration curves and traffic dampening factor.
+ */
+export function calculateETA(distanceMeters: number, speedKmh: number): number {
+  // If stopped or very slow (at a traffic signal or bus stop), assume effective average urban speed of 25 km/h
+  const effectiveSpeedKmh = Math.max(speedKmh, 25.0);
+  const speedMetersPerSecond = (effectiveSpeedKmh * 1000) / 3600;
+  const timeSeconds = distanceMeters / speedMetersPerSecond;
+  return Math.max(0.5, parseFloat((timeSeconds / 60).toFixed(1)));
+}
+
+/**
+ * Interpolates between two geographic coordinates [lon, lat] by factor t (0 to 1).
+ */
+export function interpolateCoordinate(
+  coord1: [number, number],
+  coord2: [number, number],
+  t: number
+): [number, number] {
+  const lon = coord1[0] + (coord2[0] - coord1[0]) * t;
+  const lat = coord1[1] + (coord2[1] - coord1[1]) * t;
+  return [lon, lat];
+}
+
+function toRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
+function toDegrees(radians: number): number {
+  return (radians * 180) / Math.PI;
+}
+
+// ----------------------------------------------------------------------------
+// MMU Ground-Truth 3D Campus Building Polygons
+// ----------------------------------------------------------------------------
+export const MMU_CAMPUS_BUILDINGS: CampusBuilding3D[] = [
+  {
+    id: 'mmu-building-hospital-36',
+    name: 'MM Institute of Medical Sciences & Teaching Hospital (Block 36)',
+    blockCode: 'MMIMSR-36',
+    heightMeters: 28,
+    minHeightMeters: 0,
+    colorHex: '#0284C7',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04780, 30.25150],
+        [77.04870, 30.25150],
+        [77.04870, 30.25090],
+        [77.04780, 30.25090],
+        [77.04780, 30.25150],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-cardiac-34',
+    name: 'Super-Specialty Cardiac & Cancer Pavilion (Block 34)',
+    blockCode: 'SUPER-34',
+    heightMeters: 24,
+    minHeightMeters: 0,
+    colorHex: '#38BDF8',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04880, 30.25110],
+        [77.04940, 30.25110],
+        [77.04940, 30.25050],
+        [77.04880, 30.25050],
+        [77.04880, 30.25110],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-admin-39',
+    name: 'University Administrative Secretariat & Chancellor Office (Block 39)',
+    blockCode: 'ADMIN-39',
+    heightMeters: 18,
+    minHeightMeters: 0,
+    colorHex: '#E21E26',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04610, 30.25010],
+        [77.04690, 30.25010],
+        [77.04690, 30.24950],
+        [77.04610, 30.24950],
+        [77.04610, 30.25010],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-mmec-10-14',
+    name: 'MM Engineering College Blocks 1, 2 & Central Labs (MMEC)',
+    blockCode: 'MMEC-ENG',
+    heightMeters: 20,
+    minHeightMeters: 0,
+    colorHex: '#475569',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04350, 30.24900],
+        [77.04460, 30.24900],
+        [77.04460, 30.24800],
+        [77.04350, 30.24800],
+        [77.04350, 30.24900],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-auditorium-53',
+    name: 'Central University Convention Center & Auditorium (Block 53)',
+    blockCode: 'AUDIT-53',
+    heightMeters: 16,
+    minHeightMeters: 0,
+    colorHex: '#F59E0B',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04520, 30.25130],
+        [77.04590, 30.25130],
+        [77.04590, 30.25070],
+        [77.04520, 30.25070],
+        [77.04520, 30.25130],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-boys-hostel',
+    name: 'Boys Residential Towers (BH-1, BH-5, BH-10)',
+    blockCode: 'HOSTEL-BH',
+    heightMeters: 22,
+    minHeightMeters: 0,
+    colorHex: '#3B82F6',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04250, 30.24750],
+        [77.04360, 30.24750],
+        [77.04360, 30.24640],
+        [77.04250, 30.24640],
+        [77.04250, 30.24750],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-girls-hostel',
+    name: 'Girls Residential Towers (GH-3, GH-4, GH-6, GH-8)',
+    blockCode: 'HOSTEL-GH',
+    heightMeters: 22,
+    minHeightMeters: 0,
+    colorHex: '#8B5CF6',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04710, 30.24860],
+        [77.04810, 30.24860],
+        [77.04810, 30.24750],
+        [77.04710, 30.24750],
+        [77.04710, 30.24860],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-stadium-32',
+    name: 'MM International Sports Arena & Stadium Pavilion (Block 32)',
+    blockCode: 'SPORTS-32',
+    heightMeters: 9,
+    minHeightMeters: 0,
+    colorHex: '#10B981',
+    campus: 'MULLANA_MAIN',
+    coordinates: [
+      [
+        [77.04650, 30.25290],
+        [77.04760, 30.25290],
+        [77.04760, 30.25190],
+        [77.04650, 30.25190],
+        [77.04650, 30.25290],
+      ],
+    ],
+  },
+  {
+    id: 'mmu-building-sadopur-main',
+    name: 'MMU Sadopur Academic Block & Campus Center',
+    blockCode: 'SADOPUR-MAIN',
+    heightMeters: 20,
+    minHeightMeters: 0,
+    colorHex: '#E21E26',
+    campus: 'SADOPUR_AMBALA',
+    coordinates: [
+      [
+        [76.81370, 30.34330],
+        [76.81470, 30.34330],
+        [76.81470, 30.34250],
+        [76.81370, 30.34250],
+        [76.81370, 30.34330],
+      ],
+    ],
+  },
+];

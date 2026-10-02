@@ -1,0 +1,18 @@
+{
+  "name": "mmu-bus-tracking-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Maharishi Markandeshwar University Real-Time 3D Bus Tracking System",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"bgBlue.bold,bgRed.bold\" \"npm run dev:server\" \"npm run dev:client\"",
+    "build:server": "npm --prefix server run build",
+    "build:client": "npm --prefix client run build",
+    "test": "npm --prefix server test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
+  }
+}
