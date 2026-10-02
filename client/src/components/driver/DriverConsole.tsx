@@ -45,9 +45,10 @@ export const DriverConsole: React.FC = () => {
   const [sosActive, setSosActive] = useState<boolean>(false);
   const [mobileTab, setMobileTab] = useState<'COCKPIT' | 'ROSTER'>('COCKPIT');
   const [gpsStatus, setGpsStatus] = useState<'ACQUIRING' | 'LOCKED' | 'DENIED'>('ACQUIRING');
+  const [telemetryMode, setTelemetryMode] = useState<'SIMULATED_ROUTE' | 'DEVICE_GPS'>('SIMULATED_ROUTE');
+  const [detectedDelhi, setDetectedDelhi] = useState<boolean>(false);
 
   // Live GPS telemetry — starts PARKED (0 motion) until real GPS fix arrives.
-  // Bound ONLY to navigator.geolocation.watchPosition. No synthetic movement.
   const [telemetry, setTelemetry] = useState({
     speedKmh: 0,
     bearing: 0,
@@ -58,6 +59,8 @@ export const DriverConsole: React.FC = () => {
 
   const wakeLockRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
+  const simIntervalRef = useRef<any>(null);
+  const simIndexRef = useRef<number>(0);
 
   // 1. Load routes. No trip is assumed — driver taps Start Trip to go live.
   useEffect(() => {
@@ -95,10 +98,70 @@ export const DriverConsole: React.FC = () => {
     };
   }, []);
 
-  // 2. True telemetry ONLY: high-accuracy GPS watch (1-2 Hz).
-  // No setInterval, no Math.random, no trig jitter. Parked until fix arrives.
+  // 2. Dual Telemetry Engine:
+  // - SIMULATED_ROUTE: Drives along the MMU route waypoints (smooth 45-55 km/h) for testing from PC/Delhi
+  // - DEVICE_GPS: Live hardware navigator.geolocation.watchPosition
   useEffect(() => {
     if (!isBroadcasting || !activeTrip) return;
+
+    if (telemetryMode === 'SIMULATED_ROUTE') {
+      const activeRoute = routes.find((r) => r.id === (activeTrip?.routeId || selectedRouteId)) || routes[0];
+      const points: [number, number][] =
+        activeRoute?.waypoints && activeRoute.waypoints.length > 1
+          ? activeRoute.waypoints
+          : activeRoute?.stops.map((s) => [s.longitude, s.latitude] as [number, number]) || [];
+
+      if (points.length < 2) return;
+
+      setGpsStatus('LOCKED');
+      simIndexRef.current = 0;
+
+      simIntervalRef.current = setInterval(() => {
+        simIndexRef.current = (simIndexRef.current + 1) % points.length;
+        const curr = points[simIndexRef.current];
+        const next = points[(simIndexRef.current + 1) % points.length];
+
+        const dLon = ((next[0] - curr[0]) * Math.PI) / 180;
+        const y = Math.sin(dLon) * Math.cos((next[1] * Math.PI) / 180);
+        const x =
+          Math.cos((curr[1] * Math.PI) / 180) * Math.sin((next[1] * Math.PI) / 180) -
+          Math.sin((curr[1] * Math.PI) / 180) * Math.cos((next[1] * Math.PI) / 180) * Math.cos(dLon);
+        const heading = (Math.atan2(y, x) * 180) / Math.PI;
+        const compassBearing = (heading + 360) % 360;
+        const spd = 46 + Math.sin(simIndexRef.current) * 6;
+
+        setTelemetry({
+          latitude: curr[1],
+          longitude: curr[0],
+          speedKmh: Math.round(spd),
+          bearing: Math.round(compassBearing),
+          accuracy: 3.5,
+        });
+
+        const packet = {
+          tripId: activeTrip.id,
+          busId: activeTrip.busId,
+          routeId: activeTrip.routeId,
+          latitude: curr[1],
+          longitude: curr[0],
+          speed: Math.round(spd),
+          bearing: Math.round(compassBearing),
+          accuracy: 3.5,
+          timestamp: Date.now(),
+        };
+
+        if (socketService.isSocketOpen()) {
+          socketService.sendDriverTelemetry(packet);
+        }
+      }, 1400);
+
+      return () => {
+        if (simIntervalRef.current) {
+          clearInterval(simIntervalRef.current);
+          simIntervalRef.current = null;
+        }
+      };
+    }
 
     if (!('geolocation' in navigator)) {
       setGpsStatus('DENIED');
@@ -110,8 +173,12 @@ export const DriverConsole: React.FC = () => {
         setGpsStatus('LOCKED');
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
-        const spd = (pos.coords.speed ?? 0) * 3.6; // m/s -> km/h
+        const spd = (pos.coords.speed ?? 0) * 3.6;
         const heading = pos.coords.heading ?? telemetry.bearing;
+
+        if (lat < 29.5) {
+          setDetectedDelhi(true);
+        }
 
         setTelemetry({
           latitude: lat,
@@ -153,10 +220,11 @@ export const DriverConsole: React.FC = () => {
     return () => {
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isBroadcasting, activeTrip]);
+  }, [isBroadcasting, activeTrip, telemetryMode, routes, selectedRouteId]);
 
   // Handle Start Trip / Go Live — begins real GPS broadcast
   const handleStartShift = async () => {
@@ -390,7 +458,9 @@ export const DriverConsole: React.FC = () => {
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-900/60 text-xs text-emerald-300">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                    <span className="font-bold">BROADCASTING TELEMETRY (1-2 Hz)</span>
+                    <span className="font-bold">
+                      {telemetryMode === 'SIMULATED_ROUTE' ? 'MMU ROUTE SIMULATION LIVE' : 'BROADCASTING DEVICE GPS'}
+                    </span>
                   </div>
                   <span className="font-mono text-[10px]">{manifest?.totalBoarded || 0} Boarded</span>
                 </div>
@@ -404,7 +474,56 @@ export const DriverConsole: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
+                {/* Telemetry Mode Toggle */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                    Telemetry Source
+                  </label>
+                  <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-700/80">
+                    <button
+                      type="button"
+                      onClick={() => setTelemetryMode('SIMULATED_ROUTE')}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        telemetryMode === 'SIMULATED_ROUTE'
+                          ? 'bg-blue-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🚌 MMU Route Auto-Drive
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTelemetryMode('DEVICE_GPS')}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        telemetryMode === 'DEVICE_GPS'
+                          ? 'bg-red-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      📡 Device GPS
+                    </button>
+                  </div>
+                </div>
+
+                {detectedDelhi && telemetryMode === 'DEVICE_GPS' && (
+                  <div className="p-3 bg-amber-950/80 border border-amber-600/80 rounded-xl text-xs text-amber-200">
+                    <div className="font-bold flex items-center gap-1.5 text-white">
+                      <span>⚠️</span> Device Location: Delhi NCR (~190 km away)
+                    </div>
+                    <p className="mt-1 text-[11px] leading-snug">
+                      Your PC / broadband IP is in Delhi. To drive smoothly along the MMU Ambala-Mullana corridor on the map, use <strong>MMU Route Auto-Drive</strong>!
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setTelemetryMode('SIMULATED_ROUTE')}
+                      className="mt-2 w-full py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs"
+                    >
+                      Switch to MMU Route Auto-Drive
+                    </button>
+                  </div>
+                )}
+
                 <select
                   value={selectedRouteId}
                   onChange={(e) => setSelectedRouteId(e.target.value)}
@@ -423,7 +542,9 @@ export const DriverConsole: React.FC = () => {
                   <Play className="w-4 h-4" /> Start Trip / Go Live
                 </button>
                 <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-                  Real GPS broadcasting begins after trip start. Until then the bus stays parked at the terminal.
+                  {telemetryMode === 'SIMULATED_ROUTE'
+                    ? 'Simulates realistic driving along the selected MMU route with live speed & stop updates.'
+                    : 'Broadcasts real device GPS coordinates. Parked until fix arrives.'}
                 </p>
               </div>
             )}

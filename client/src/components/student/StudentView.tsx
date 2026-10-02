@@ -39,6 +39,13 @@ export const StudentView: React.FC<StudentViewProps> = () => {
 
       if (res.bus) {
         const tripActive = res.liveTracking.isTripActive === true;
+        const rawLat = res.liveTracking.currentCoordinates[1];
+        const rawLng = res.liveTracking.currentCoordinates[0];
+        // Enforce MMU Mullana/Ambala transit corridor bounds (prevent Delhi IP/remote jump)
+        const isValidCorridor = rawLat >= 29.8 && rawLat <= 30.9 && rawLng >= 76.2 && rawLng <= 77.7;
+        const validLat = isValidCorridor ? rawLat : 30.24853;
+        const validLng = isValidCorridor ? rawLng : 77.04402;
+
         const parked: LiveBusState = {
           busId: res.bus.id,
           busNumber: res.bus.busNumber,
@@ -51,8 +58,8 @@ export const StudentView: React.FC<StudentViewProps> = () => {
           driverPhone: res.bus.assignedDriverPhone,
           routeId: res.route.id,
           routeName: res.route.name,
-          latitude: res.liveTracking.currentCoordinates[1],
-          longitude: res.liveTracking.currentCoordinates[0],
+          latitude: validLat,
+          longitude: validLng,
           // Parked buses report zero motion — never fabricate speed.
           speedKmh: tripActive ? res.liveTracking.speedKmh : 0,
           bearing: res.liveTracking.bearing || 0,
@@ -83,6 +90,8 @@ export const StudentView: React.FC<StudentViewProps> = () => {
         if (!prev) return null;
         // Ignore packets for other buses on shared route channel
         if (update.busId && update.busId !== prev.busId) return prev;
+        // Filter out any out-of-bounds telemetry (e.g. from Delhi)
+        if (update.latitude < 29.8 || update.latitude > 30.9) return prev;
         const live = (update.speedKmh || 0) > 0.5;
         return {
           ...prev,

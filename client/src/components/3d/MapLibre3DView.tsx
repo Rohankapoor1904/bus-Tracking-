@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { Route, RouteStop, LiveBusState } from '../../types/index.js';
 import { VehicleLerpEngine } from './VehicleLerpEngine.js';
 import { api } from '../../services/api.js';
+import { getRoadSnappedPath } from '../../services/roadRouter.js';
 import {
   Navigation,
   Layers,
@@ -11,9 +12,72 @@ import {
   Compass,
   Map as MapIcon,
   Moon,
+  Building2,
+  LocateFixed,
+  Globe,
+  Milestone,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 
-export type MapStyleType = 'GOOGLE_VECTOR' | 'DARK_COCKPIT';
+export type MapStyleType = 'GOOGLE_MAPS' | 'GOOGLE_SATELLITE' | 'DARK_COCKPIT';
+export type BuildingViewMode = 'GLASS' | 'SOLID' | 'OFF';
+
+// Genuine Official Google Maps Roadmap Specification
+const GOOGLE_ROADMAP_SPEC: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    'google-roadmap': {
+      type: 'raster',
+      tiles: [
+        'https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
+        'https://mt1.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
+        'https://mt2.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
+        'https://mt3.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
+      ],
+      tileSize: 256,
+      attribution: '© Google Maps',
+      maxzoom: 22,
+    },
+  },
+  layers: [
+    {
+      id: 'google-roadmap-tiles',
+      type: 'raster',
+      source: 'google-roadmap',
+      minzoom: 0,
+      maxzoom: 22,
+    },
+  ],
+};
+
+// Genuine Official Google Maps Hybrid Satellite Specification
+const GOOGLE_SATELLITE_SPEC: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    'google-hybrid': {
+      type: 'raster',
+      tiles: [
+        'https://mt0.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
+        'https://mt1.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
+        'https://mt2.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
+        'https://mt3.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
+      ],
+      tileSize: 256,
+      attribution: '© Google Maps Satellite',
+      maxzoom: 22,
+    },
+  },
+  layers: [
+    {
+      id: 'google-hybrid-tiles',
+      type: 'raster',
+      source: 'google-hybrid',
+      minzoom: 0,
+      maxzoom: 22,
+    },
+  ],
+};
 
 interface MapLibre3DViewProps {
   activeRoute?: Route | null;
@@ -28,6 +92,60 @@ interface MapLibre3DViewProps {
 const DEFAULT_CENTER: [number, number] = [77.04505, 30.25045]; // MMU Mullana Campus
 const PITCH_3D = 60; // Google Maps style immersion: 55-65deg
 const PITCH_FLAT = 0;
+
+// Campus building footprints: Shrunk to real plots so corridors and Stop 8 stay 100% open
+const MMU_FOOTPRINT_SHRINK = 0.30;
+const MMU_MAX_HEIGHT_M = 10;
+
+interface UserGeoState {
+  coords: [number, number];
+  isDelhiOrRemote: boolean;
+  distanceKm: number;
+  label: string;
+}
+
+type LngLatRing = number[][];
+
+const shrinkRing = (ring: LngLatRing, cx: number, cy: number, k: number): LngLatRing =>
+  ring.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k]);
+
+const fitMmuBuildings = (fc: any): any => {
+  if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) return fc;
+  return {
+    ...fc,
+    features: fc.features.map((f: any) => {
+      if (!f?.geometry || (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon')) return f;
+      const polys: number[][][][] =
+        f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      polys.forEach((poly) =>
+        poly.forEach((ring) =>
+          ring.forEach(([x, y]) => {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          })
+        )
+      );
+      if (!isFinite(minX)) return f;
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const shrunk = polys.map((poly) => poly.map((ring) => shrinkRing(ring, cx, cy, MMU_FOOTPRINT_SHRINK)));
+      return {
+        ...f,
+        properties: {
+          ...f.properties,
+          height: Math.min(Number(f.properties?.height) || 14, MMU_MAX_HEIGHT_M),
+        },
+        geometry: {
+          ...f.geometry,
+          coordinates: f.geometry.type === 'Polygon' ? shrunk[0] : shrunk,
+        },
+      };
+    }),
+  };
+};
 
 function isBusLive(bus?: LiveBusState | null): boolean {
   if (!bus) return false;
@@ -52,16 +170,154 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   const lerpEngineRef = useRef<VehicleLerpEngine | null>(null);
   const buildingDataRef = useRef<any>(null);
 
-  const [mapStyle, setMapStyle] = useState<MapStyleType>('GOOGLE_VECTOR');
+  const [mapStyle, setMapStyle] = useState<MapStyleType>('GOOGLE_MAPS');
+  const [buildingMode, setBuildingMode] = useState<BuildingViewMode>('GLASS');
+  const [userGeo, setUserGeo] = useState<UserGeoState | null>(null);
+  const [geoNotice, setGeoNotice] = useState<{
+    type: 'REMOTE_IP' | 'LOCATED';
+    message: string;
+    distKm: number;
+  } | null>(null);
+  const userMarkerRef = useRef<maplibregl.Marker | null>(null);
+
   const [is3DMode, setIs3DMode] = useState<boolean>(true);
   const [isFollowingBus, setIsFollowingBus] = useState<boolean>(true);
   const [mapLoaded, setMapLoaded] = useState<boolean>(false);
   const [currentSpeed, setCurrentSpeed] = useState<number>(0);
   const [currentBearing, setCurrentBearing] = useState<number>(0);
+  // Road-snapped corridor geometry (OSRM). Null = still resolving / failed.
+  const [roadPath, setRoadPath] = useState<[number, number][] | null>(null);
 
-  const getStyleConfig = useCallback((style: MapStyleType): string => {
-    if (style === 'DARK_COCKPIT') return 'https://tiles.openfreemap.org/styles/positron';
-    return 'https://tiles.openfreemap.org/styles/liberty';
+  // Set user location puck directly to chosen coordinates (e.g. stop or campus)
+  const setUserLocationToCoords = useCallback((coords: [number, number], title: string) => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!userMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'user-location-pulse select-none cursor-pointer';
+      el.title = title;
+      el.innerHTML = `
+        <div class="relative flex items-center justify-center">
+          <span class="animate-ping absolute inline-flex h-10 w-10 rounded-full bg-cyan-400 opacity-75"></span>
+          <div class="relative flex items-center justify-center w-7 h-7 rounded-full bg-cyan-600 border-2 border-white shadow-2xl text-[10px] font-black text-white">
+            ME
+          </div>
+        </div>
+      `;
+      userMarkerRef.current = new maplibregl.Marker({ element: el })
+        .setLngLat(coords)
+        .addTo(map);
+    } else {
+      userMarkerRef.current.setLngLat(coords);
+    }
+    map.flyTo({ center: coords, zoom: 16.5, pitch: PITCH_3D, duration: 1100 });
+    setGeoNotice(null);
+  }, []);
+
+  // Check user device location only when user explicitly taps 'Locate Me'
+  const checkUserLocation = useCallback((centerIfFound = false) => {
+    if (!('geolocation' in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lng = pos.coords.longitude;
+        const lat = pos.coords.latitude;
+        const dLat = (lat - 30.25045) * 111.2;
+        const dLon = (lng - 77.04505) * 96.3;
+        const distKm = Math.round(Math.sqrt(dLat * dLat + dLon * dLon));
+
+        // Strict MMU Transit Corridor validation (Ambala, Mullana, Yamunanagar, Kurukshetra)
+        // Rejects PC broadband / Wi-Fi gateway IPs (such as Delhi NCR, lat 28.6) from hijacking the map.
+        const isWithinTransitZone = lat >= 29.8 && lat <= 30.9 && lng >= 76.2 && lng <= 77.7;
+        const isRemote = !isWithinTransitZone || distKm > 40;
+
+        if (isRemote) {
+          // Keep the camera strictly on the MMU corridor — NEVER jump to Delhi.
+          setGeoNotice({
+            type: 'REMOTE_IP',
+            message: `Broadband / Wi-Fi IP resolved to an external gateway (~${distKm} km away). Camera held on MMU transit corridor.`,
+            distKm,
+          });
+          return;
+        }
+
+        setUserGeo({
+          coords: [lng, lat],
+          isDelhiOrRemote: false,
+          distanceKm: distKm,
+          label: 'Near Campus Route',
+        });
+
+        const map = mapRef.current;
+        if (map) {
+          if (!userMarkerRef.current) {
+            const el = document.createElement('div');
+            el.className = 'user-location-pulse select-none cursor-pointer';
+            el.title = `Your GPS Position (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+            el.innerHTML = `
+              <div class="relative flex items-center justify-center">
+                <span class="animate-ping absolute inline-flex h-10 w-10 rounded-full bg-cyan-400 opacity-75"></span>
+                <div class="relative flex items-center justify-center w-7 h-7 rounded-full bg-cyan-600 border-2 border-white shadow-2xl text-[10px] font-black text-white">
+                  ME
+                </div>
+              </div>
+            `;
+            userMarkerRef.current = new maplibregl.Marker({ element: el })
+              .setLngLat([lng, lat])
+              .addTo(map);
+          } else {
+            userMarkerRef.current.setLngLat([lng, lat]);
+          }
+
+          if (centerIfFound) {
+            map.flyTo({ center: [lng, lat], zoom: 16.2, pitch: PITCH_3D, duration: 1200 });
+          }
+        }
+      },
+      (err) => {
+        console.warn('Geolocation lookup notice:', err.message);
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 }
+    );
+  }, []);
+
+  // Dynamic Building View Mode Handler (Glass / Solid / Off)
+  const handleBuildingModeChange = (next: BuildingViewMode) => {
+    setBuildingMode(next);
+    const map = mapRef.current;
+    if (!map) return;
+    const osmOpacity = next === 'GLASS' ? 0.22 : next === 'SOLID' ? 0.85 : 0;
+    const mmuOpacity = next === 'GLASS' ? 0.28 : next === 'SOLID' ? 0.85 : 0;
+    if (map.getLayer('3d-buildings-osm')) {
+      map.setPaintProperty('3d-buildings-osm', 'fill-extrusion-opacity', osmOpacity);
+    }
+    if (map.getLayer('mmu-3d-buildings')) {
+      map.setPaintProperty('mmu-3d-buildings', 'fill-extrusion-opacity', mmuOpacity);
+    }
+  };
+
+  // Resolve the active corridor to real road geometry. Never blocks render:
+  // the raw waypoints draw first, then upgrade to the snapped path on arrival.
+  useEffect(() => {
+    setRoadPath(null);
+    if (!activeRoute || activeRoute.stops.length < 2) return;
+    const routeId = activeRoute.id;
+    const ctrl = new AbortController();
+    const timeout = window.setTimeout(() => ctrl.abort(), 12000);
+    let live = true;
+    getRoadSnappedPath(routeId, activeRoute.stops, activeRoute.waypoints, ctrl.signal).then((path) => {
+      if (live && path !== activeRoute.waypoints) setRoadPath(path);
+    });
+    return () => {
+      live = false;
+      window.clearTimeout(timeout);
+      ctrl.abort();
+    };
+  }, [activeRoute]);
+
+  const getStyleConfig = useCallback((style: MapStyleType): any => {
+    if (style === 'GOOGLE_MAPS') return GOOGLE_ROADMAP_SPEC;
+    if (style === 'GOOGLE_SATELLITE') return GOOGLE_SATELLITE_SPEC;
+    return 'https://tiles.openfreemap.org/styles/positron';
   }, []);
 
   // Prefetch campus building GeoJSON once
@@ -97,8 +353,11 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           (l: any) => l.type === 'symbol' && l.layout?.['text-field']
         )?.id;
 
+        const osmOpacity = buildingMode === 'GLASS' ? 0.22 : buildingMode === 'SOLID' ? 0.85 : 0;
+        const mmuOpacity = buildingMode === 'GLASS' ? 0.28 : buildingMode === 'SOLID' ? 0.85 : 0;
+
         // 1. OSM / Mapbox-Streets style vector buildings -> 3D extrusions.
-        // Height spec: ['get','height'] with fallback interpolation on min_height.
+        // Default opacity is GLASS: 0.22, so roads and turns are completely visible
         if (map.getSource('openmaptiles') && !map.getLayer('3d-buildings-osm')) {
           map.addLayer(
             {
@@ -128,7 +387,6 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                   14.08,
                   ['coalesce', ['get', 'render_height'], ['get', 'height'], 12],
                 ],
-                // Fallback interpolation for base heights per directive
                 'fill-extrusion-base': [
                   'interpolate',
                   ['linear'],
@@ -138,7 +396,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                   14.08,
                   ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
                 ],
-                'fill-extrusion-opacity': 0.88,
+                'fill-extrusion-opacity': osmOpacity,
                 'fill-extrusion-vertical-gradient': true,
               },
             } as any,
@@ -147,25 +405,30 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
 
         // 2. MMU campus high-fidelity extrusions (hospital, hostels, MMEC...)
+        // Footprints are shrunk to the real plots so boxes never cover roads,
+        // and rendered in translucent glass so Stop 8 terminal stays visible.
         if (geoJson) {
+          const fitted = fitMmuBuildings(geoJson);
           if (map.getSource('mmu-buildings-source')) {
-            (map.getSource('mmu-buildings-source') as maplibregl.GeoJSONSource).setData(geoJson);
+            (map.getSource('mmu-buildings-source') as maplibregl.GeoJSONSource).setData(fitted);
           } else {
-            map.addSource('mmu-buildings-source', { type: 'geojson', data: geoJson });
-            map.addLayer({
-              id: 'mmu-3d-buildings',
-              type: 'fill-extrusion',
-              source: 'mmu-buildings-source',
-              paint: {
-                // Facade tinting per building color
-                'fill-extrusion-color': ['coalesce', ['get', 'color'], '#dc2626'],
-                // Dynamic extrusion heights with min_height fallback
-                'fill-extrusion-height': ['coalesce', ['get', 'height'], 16],
-                'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
-                'fill-extrusion-opacity': 0.94,
-                'fill-extrusion-vertical-gradient': true,
-              },
-            });
+            map.addSource('mmu-buildings-source', { type: 'geojson', data: fitted });
+            map.addLayer(
+              {
+                id: 'mmu-3d-buildings',
+                type: 'fill-extrusion',
+                source: 'mmu-buildings-source',
+                minzoom: 15,
+                paint: {
+                  'fill-extrusion-color': ['coalesce', ['get', 'color'], '#dc2626'],
+                  'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
+                  'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+                  'fill-extrusion-opacity': mmuOpacity,
+                  'fill-extrusion-vertical-gradient': true,
+                },
+              } as any,
+              labelLayerId
+            );
           }
         }
 
@@ -174,7 +437,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         console.warn('3D extrusion injection failed:', err);
       }
     },
-    [applySunLighting]
+    [applySunLighting, buildingMode]
   );
 
   // 1. Init map (pitch 60, bearing sync ready, flyTo/easeTo transitions)
@@ -183,7 +446,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: getStyleConfig('GOOGLE_VECTOR'),
+      style: getStyleConfig('GOOGLE_MAPS'),
       center: DEFAULT_CENTER,
       zoom: 16.1,
       pitch: PITCH_3D,
@@ -236,7 +499,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           .catch(() => injectBuildingExtrusions(map, null));
       }
       applySunLighting(map);
-      // Cinematic settle onto campus
+      // Cinematic settle onto MMU Mullana campus
       map.easeTo({ center: DEFAULT_CENTER, zoom: 16.1, pitch: PITCH_3D, bearing: 28, duration: 900 });
     };
 
@@ -254,6 +517,8 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       lerpBox.current = null;
       puckBox.current?.remove();
       puckBox.current = null;
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
       radarBox.current.forEach((m) => m.remove());
       radarBox.current.clear();
       stopsBox.current.forEach((m) => m.remove());
@@ -296,10 +561,14 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       return;
     }
 
+    // Prefer OSRM road-snapped geometry; raw seed waypoints are only sparse
+    // straight-line fallbacks and must never render as the final corridor.
+    const corridorPath: [number, number][] =
+      roadPath && roadPath.length > 1 ? roadPath : activeRoute.waypoints;
     const routeGeoJson: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
       properties: { color: activeRoute.colorHex || '#E21E26' },
-      geometry: { type: 'LineString', coordinates: activeRoute.waypoints },
+      geometry: { type: 'LineString', coordinates: corridorPath },
     };
 
     if (map.getSource('active-route-source')) {
@@ -357,12 +626,12 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     });
 
     // Frame the corridor on route change
-    if (activeRoute.waypoints.length > 1) {
+    if (corridorPath.length > 1) {
       const bounds = new maplibregl.LngLatBounds();
-      activeRoute.waypoints.forEach((w) => bounds.extend(w as [number, number]));
+      corridorPath.forEach((w) => bounds.extend(w as [number, number]));
       map.fitBounds(bounds, { padding: 70, pitch: PITCH_3D, duration: 1200 });
     }
-  }, [activeRoute, mapLoaded, selectedStop, mapStyle, onSelectStop]);
+  }, [activeRoute, mapLoaded, selectedStop, mapStyle, onSelectStop, roadPath]);
 
   // 3. Sleek directional vehicle puck — reflects ONLY real driver telemetry.
   // Parked: static at terminal, "Bus Parked" badge, zero motion.
@@ -458,7 +727,11 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         }
       });
       if (isFollowingBus) {
-        map.flyTo({ center: coords, zoom: 16.8, pitch: is3DMode ? PITCH_3D : 0, bearing: isCockpitMode ? activeBus.bearing || 0 : 28, duration: 1400 });
+        const safeCenter: [number, number] =
+          coords[1] >= 29.8 && coords[1] <= 30.9 && coords[0] >= 76.2 && coords[0] <= 77.7
+            ? coords
+            : DEFAULT_CENTER;
+        map.flyTo({ center: safeCenter, zoom: 16.8, pitch: is3DMode ? PITCH_3D : 0, bearing: isCockpitMode ? activeBus.bearing || 0 : 28, duration: 1400 });
       }
     } else {
       // Smooth interpolation toward the fresh live packet (no snapping)
@@ -515,6 +788,18 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     mapRef.current?.flyTo({ center: DEFAULT_CENTER, zoom: 16.8, pitch: PITCH_3D, bearing: 30, duration: 1400 });
   };
 
+  const fitRouteCorridor = () => {
+    const map = mapRef.current;
+    if (!map || !activeRoute) return;
+    const corridorPath: [number, number][] =
+      roadPath && roadPath.length > 1 ? roadPath : activeRoute.waypoints;
+    if (corridorPath.length > 1) {
+      const bounds = new maplibregl.LngLatBounds();
+      corridorPath.forEach((w) => bounds.extend(w as [number, number]));
+      map.fitBounds(bounds, { padding: 60, pitch: 45, duration: 1200 });
+    }
+  };
+
   const live = isBusLive(activeBus);
 
   return (
@@ -554,15 +839,103 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         </div>
       )}
 
+      {/* Geolocation Remote / Outside Service Zone Non-Blocking Notice */}
+      {geoNotice && (
+        <div className="absolute top-20 sm:top-24 left-2 right-2 md:left-4 md:right-auto md:w-[420px] z-30 pointer-events-auto">
+          <div className="bg-slate-900/98 backdrop-blur-2xl text-white p-3 sm:p-4 rounded-2xl shadow-2xl border border-amber-500/60 flex flex-col gap-2.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h5 className="text-xs font-black text-amber-400">Desktop Broadband / Wi-Fi IP Notice</h5>
+                  <p className="text-[11px] text-slate-300 leading-snug">
+                    Broadband IP maps to an external gateway (~{geoNotice.distKm} km away). Camera held safely on MMU corridor.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setGeoNotice(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg bg-slate-800"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="pt-2 border-t border-slate-800">
+              <div className="text-[10px] uppercase font-bold text-slate-400 mb-1.5">
+                Quick Select Your Boarding Stop:
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => setUserLocationToCoords([76.83430, 30.32980], 'Ambala Cantt Railway Station')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-left text-[11px] font-bold text-cyan-300 flex items-center gap-1.5 transition-colors"
+                >
+                  <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                  <span className="truncate">Ambala Cantt (#1)</span>
+                </button>
+                <button
+                  onClick={() => setUserLocationToCoords([76.95800, 30.29800], 'Saha Industrial Junction')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-left text-[11px] font-bold text-cyan-300 flex items-center gap-1.5 transition-colors"
+                >
+                  <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                  <span className="truncate">Saha Junction (#5)</span>
+                </button>
+                <button
+                  onClick={() => setUserLocationToCoords([77.04100, 30.25200], 'MMU Mullana Main Gate')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-left text-[11px] font-bold text-cyan-300 flex items-center gap-1.5 transition-colors"
+                >
+                  <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                  <span className="truncate">MMU Main Gate (#7)</span>
+                </button>
+                <button
+                  onClick={() => setUserLocationToCoords([77.04402, 30.24853], 'Stop 8 MMEC Engineering Block')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-left text-[11px] font-bold text-cyan-300 flex items-center gap-1.5 transition-colors"
+                >
+                  <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                  <span className="truncate">MMEC Terminal (#8)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="absolute top-16 md:top-4 right-2 sm:right-4 z-20 flex flex-col items-end gap-1.5 sm:gap-2 pointer-events-auto">
         <div className="flex md:hidden items-center bg-slate-900/95 backdrop-blur-xl p-1 rounded-xl border border-slate-700/80 shadow-2xl gap-1">
           <button
-            onClick={() => handleStyleChange(mapStyle === 'GOOGLE_VECTOR' ? 'DARK_COCKPIT' : 'GOOGLE_VECTOR')}
-            className={`p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${mapStyle === 'DARK_COCKPIT' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}
-            title="Toggle Light / Dark Mode"
+            onClick={() => {
+              const next = mapStyle === 'GOOGLE_MAPS' ? 'GOOGLE_SATELLITE' : mapStyle === 'GOOGLE_SATELLITE' ? 'DARK_COCKPIT' : 'GOOGLE_MAPS';
+              handleStyleChange(next);
+            }}
+            className={`p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+              mapStyle === 'GOOGLE_MAPS'
+                ? 'bg-blue-600 text-white'
+                : mapStyle === 'GOOGLE_SATELLITE'
+                ? 'bg-emerald-600 text-white'
+                : 'bg-red-600 text-white'
+            }`}
+            title="Switch Map (Google Maps / Satellite / Dark)"
           >
-            {mapStyle === 'DARK_COCKPIT' ? <Moon className="w-3.5 h-3.5" /> : <MapIcon className="w-3.5 h-3.5" />}
-            <span className="text-[10px]">{mapStyle === 'DARK_COCKPIT' ? 'Dark' : '3D'}</span>
+            {mapStyle === 'GOOGLE_MAPS' ? <MapIcon className="w-3.5 h-3.5" /> : mapStyle === 'GOOGLE_SATELLITE' ? <Globe className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            <span className="text-[10px]">{mapStyle === 'GOOGLE_MAPS' ? 'Google' : mapStyle === 'GOOGLE_SATELLITE' ? 'Sat' : 'Dark'}</span>
+          </button>
+          <button
+            onClick={() => {
+              const next = buildingMode === 'GLASS' ? 'SOLID' : buildingMode === 'SOLID' ? 'OFF' : 'GLASS';
+              handleBuildingModeChange(next);
+            }}
+            className={`p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+              buildingMode === 'GLASS'
+                ? 'bg-blue-600 text-white'
+                : buildingMode === 'SOLID'
+                ? 'bg-amber-600 text-white'
+                : 'bg-slate-800 text-slate-300'
+            }`}
+            title="3D Building Mode: Glass / Solid / Off"
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span className="text-[10px]">{buildingMode === 'GLASS' ? 'Glass' : buildingMode === 'SOLID' ? 'Solid' : 'Off'}</span>
           </button>
           <button
             onClick={toggle3DMode}
@@ -571,6 +944,20 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           >
             <Layers className="w-3.5 h-3.5" />
             <span className="text-[10px]">{is3DMode ? '60°' : '2D'}</span>
+          </button>
+          <button
+            onClick={() => checkUserLocation(true)}
+            className="p-1.5 rounded-lg text-xs font-bold bg-slate-800 text-cyan-300 hover:bg-slate-700"
+            title="Locate My GPS"
+          >
+            <LocateFixed className="w-3.5 h-3.5 text-cyan-400" />
+          </button>
+          <button
+            onClick={fitRouteCorridor}
+            className="p-1.5 rounded-lg text-xs font-bold bg-slate-800 text-amber-300 hover:bg-slate-700"
+            title="Fit Full Ambala-MMU Corridor"
+          >
+            <Milestone className="w-3.5 h-3.5 text-amber-400" />
           </button>
           <button
             onClick={() => setIsFollowingBus(!isFollowingBus)}
@@ -584,13 +971,20 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           </button>
         </div>
 
-        <div className="hidden md:flex items-center bg-slate-900/90 backdrop-blur-xl p-1 rounded-2xl border border-slate-700 shadow-2xl">
+        <div className="hidden md:flex items-center bg-slate-900/90 backdrop-blur-xl p-1 rounded-2xl border border-slate-700 shadow-2xl gap-1">
           <button
-            onClick={() => handleStyleChange('GOOGLE_VECTOR')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_VECTOR' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+            onClick={() => handleStyleChange('GOOGLE_MAPS')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_MAPS' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
           >
             <MapIcon className="w-3.5 h-3.5" />
-            <span>Google 3D</span>
+            <span>Google Maps</span>
+          </button>
+          <button
+            onClick={() => handleStyleChange('GOOGLE_SATELLITE')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${mapStyle === 'GOOGLE_SATELLITE' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>Satellite</span>
           </button>
           <button
             onClick={() => handleStyleChange('DARK_COCKPIT')}
@@ -603,11 +997,44 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         <div className="hidden md:flex items-center justify-end gap-2">
           <button
+            onClick={() => {
+              const next = buildingMode === 'GLASS' ? 'SOLID' : buildingMode === 'SOLID' ? 'OFF' : 'GLASS';
+              handleBuildingModeChange(next);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-xl backdrop-blur-md border ${
+              buildingMode === 'GLASS'
+                ? 'bg-blue-600/90 text-white border-blue-400'
+                : buildingMode === 'SOLID'
+                ? 'bg-amber-600/90 text-white border-amber-400'
+                : 'bg-slate-900/90 text-slate-300 border-slate-700 hover:bg-slate-800'
+            }`}
+            title="3D Building Visibility: Glass (Roads Clear) / Solid / Off"
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>{buildingMode === 'GLASS' ? '3D Glass (Roads Clear)' : buildingMode === 'SOLID' ? '3D Solid' : 'Buildings Off'}</span>
+          </button>
+          <button
             onClick={toggle3DMode}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-xl backdrop-blur-md border ${is3DMode ? 'bg-red-600 text-white border-red-500' : 'bg-slate-900/90 text-slate-300 border-slate-700 hover:bg-slate-800'}`}
           >
             <Layers className="w-3.5 h-3.5" />
             <span>{is3DMode ? '60° 3D Tilt' : '2D Top-Down'}</span>
+          </button>
+          <button
+            onClick={() => checkUserLocation(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-slate-900/90 text-cyan-300 border border-slate-700 hover:bg-slate-800 transition-all shadow-xl backdrop-blur-md"
+            title="Locate My GPS Position"
+          >
+            <LocateFixed className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Locate Me</span>
+          </button>
+          <button
+            onClick={fitRouteCorridor}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-slate-900/90 text-amber-300 border border-slate-700 hover:bg-slate-800 transition-all shadow-xl backdrop-blur-md"
+            title="Fit Full Ambala - MMU Route Corridor"
+          >
+            <Milestone className="w-3.5 h-3.5 text-amber-400" />
+            <span>Fit Route</span>
           </button>
           <button
             onClick={() => setIsFollowingBus(!isFollowingBus)}

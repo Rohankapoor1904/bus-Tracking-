@@ -275,6 +275,17 @@ class FleetDatabase {
 
   // --- Telemetry ---
   public async saveTelemetryPoint(point: TelemetryPoint): Promise<TelemetryPoint> {
+    // Boundary check: Enforce North India / Haryana MMU transit operational bounds (Lat: 29.8 to 30.9, Lon: 76.2 to 77.7)
+    // Prevents remote desktop/Wi-Fi IPs (like Delhi lat 28.6) from hijacking bus positions.
+    const isOutOfBounds =
+      point.latitude < 29.8 || point.latitude > 30.9 || point.longitude < 76.2 || point.longitude > 77.7;
+    if (isOutOfBounds) {
+      console.warn(
+        `[Telemetry] Out-of-bounds telemetry rejected for ${point.busId}: [lat: ${point.latitude}, lng: ${point.longitude}] (outside MMU operational corridor).`
+      );
+      return point;
+    }
+
     this.telemetryLogs.push(point);
     // Keep max 5000 in memory
     if (this.telemetryLogs.length > 5000) {
