@@ -12,6 +12,10 @@ class RealTimeSocketService {
   private isConnected = false;
 
   private getWsUrl(): string {
+    const envUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
+    if (envUrl) {
+      return envUrl.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws';
+    }
     const host = getServerHost().replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${host}/ws`;

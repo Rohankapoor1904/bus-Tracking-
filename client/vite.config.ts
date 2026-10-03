@@ -8,5 +8,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Allow proxied/remote dev hosts (e.g. container port-forwarding domains).
+    allowedHosts: true,
   },
 });

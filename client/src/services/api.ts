@@ -11,19 +11,28 @@ import {
 export function getServerHost(): string {
   const saved = localStorage.getItem('mmu_server_host');
   if (saved) return saved;
+  // Explicit backend origin injected at build/runtime (required when the API is
+  // served from a different origin than the web app, e.g. split deployments).
+  const envUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
+  if (envUrl) return envUrl;
   if (Capacitor.isNativePlatform()) {
     // Default to dev PC IP address over Wi-Fi when running native Android APK
     return '192.168.1.12:4000';
   }
   const host = window.location.hostname || 'localhost';
-  return `${host}:4000`;
+  const port = (import.meta.env.VITE_SERVER_PORT as string | undefined) || '4000';
+  return `${host}:${port}`;
+}
+
+export function getServerOrigin(): string {
+  const host = getServerHost();
+  if (/^https?:\/\//.test(host)) return host.replace(/\/$/, '');
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+  return `${protocol}//${host}`;
 }
 
 export function getApiBase(): string {
-  const host = getServerHost();
-  const protocol = host.startsWith('https') ? 'https' : 'http';
-  const cleanHost = host.replace(/^https?:\/\//, '');
-  return `${protocol}://${cleanHost}/api/v1`;
+  return `${getServerOrigin()}/api/v1`;
 }
 
 class ApiService {

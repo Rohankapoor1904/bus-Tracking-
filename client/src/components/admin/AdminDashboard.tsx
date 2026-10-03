@@ -119,26 +119,31 @@ export const AdminDashboard: React.FC = () => {
   const mapFlyToRef = React.useRef<((bus: LiveBusState) => void) | null>(null);
 
   const loadData = async () => {
-    try {
-      const [metricsData, busesData, routesData, manifestData, alertsData] = await Promise.all([
-        api.getAdminFleetOverview(),
-        api.getLiveFleet(),
-        api.getRoutes(),
-        api.getAdminManifestBreakdown(),
-        api.getAdminAlerts(),
-      ]);
+    // Load independently: a 403/partial failure on one scoped endpoint must not
+    // blank the entire dashboard.
+    const [metricsRes, busesRes, routesRes, manifestRes, alertsRes] = await Promise.allSettled([
+      api.getAdminFleetOverview(),
+      api.getLiveFleet(),
+      api.getRoutes(),
+      api.getAdminManifestBreakdown(),
+      api.getAdminAlerts(),
+    ]);
 
-      setMetrics(metricsData);
+    if (metricsRes.status === 'fulfilled') setMetrics(metricsRes.value);
+    if (busesRes.status === 'fulfilled') {
+      const busesData = busesRes.value;
       setLiveBuses(busesData);
-      setRoutes(routesData);
-      setSelectedRoute(routesData[0] || null);
-      setManifestBreakdown(manifestData);
-      setAlerts(alertsData);
-      if (busesData.length > 0) {
-        setSelectedBus(busesData[0]);
-      }
-    } catch (err) {
-      console.error('Failed to load admin dashboard data:', err);
+      if (busesData.length > 0) setSelectedBus((prev) => prev ?? busesData[0]);
+    }
+    if (routesRes.status === 'fulfilled') {
+      setRoutes(routesRes.value);
+      setSelectedRoute((prev) => prev ?? routesRes.value[0] ?? null);
+    }
+    if (manifestRes.status === 'fulfilled') setManifestBreakdown(manifestRes.value);
+    if (alertsRes.status === 'fulfilled') setAlerts(alertsRes.value);
+
+    for (const r of [metricsRes, busesRes, routesRes, manifestRes, alertsRes]) {
+      if (r.status === 'rejected') console.warn('Admin dashboard partial load failure:', r.reason);
     }
   };
 
@@ -217,7 +222,7 @@ export const AdminDashboard: React.FC = () => {
           <div>
             <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Fleet</span>
             <div className="text-lg sm:text-2xl font-black text-white mt-0.5">
-              {metrics?.activeTripsCount || 3} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {metrics?.totalFleetCount || 5}</span>
+              {metrics?.activeTripsCount ?? 0} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {metrics?.totalFleetCount ?? liveBuses.length}</span>
             </div>
             <span className="text-[9px] sm:text-[10px] text-emerald-400 font-semibold hidden xs:inline">Live GPS Ingestion</span>
           </div>
@@ -231,7 +236,7 @@ export const AdminDashboard: React.FC = () => {
           <div>
             <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Boarded Today</span>
             <div className="text-lg sm:text-2xl font-black text-white mt-0.5">
-              {metrics?.totalStudentsBoardedToday || 42} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {metrics?.totalStudentsEnrolled || 68}</span>
+              {metrics?.totalStudentsBoardedToday ?? 0} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {metrics?.totalStudentsEnrolled ?? 0}</span>
             </div>
             <span className="text-[9px] sm:text-[10px] text-amber-400 font-semibold hidden xs:inline">All Corridors</span>
           </div>

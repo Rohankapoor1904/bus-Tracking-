@@ -92,11 +92,19 @@ export const StudentView: React.FC<StudentViewProps> = () => {
     }
   };
 
+  // Initial allocation load (once on mount).
   useEffect(() => {
     loadAllocation();
+  }, []);
+
+  // Open the realtime channel once the student's assigned route is known.
+  useEffect(() => {
+    const routeId = data?.route?.id;
+    if (!routeId) return;
 
     const token = api.getToken() || undefined;
-    socketService.connect(token, 'route-amb-01');
+    // Subscribe to the student's own assigned corridor (not a hardcoded route).
+    socketService.connect(token, routeId);
 
     const unsubscribePos = socketService.on('BUS_POSITION_UPDATE', (update: any) => {
       setLiveBus((prev) => {
@@ -138,7 +146,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
       unsubscribePos();
       unsubscribeGeofence();
     };
-  }, []);
+  }, [data?.route?.id]);
 
   const triggerTestGeofence = () => {
     audioAlert.playGeofenceApproachingAlert();

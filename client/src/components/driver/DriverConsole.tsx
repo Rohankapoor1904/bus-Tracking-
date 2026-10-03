@@ -24,6 +24,9 @@ import {
 import confetti from 'canvas-confetti';
 
 const COMPASS_LABELS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+// Route-following simulation is a development/test aid only; production
+// drivers must broadcast real device GPS.
+const DEV_MODE = import.meta.env.DEV === true;
 const compassLabel = (bearing: number): string =>
   COMPASS_LABELS[Math.round((((bearing % 360) + 360) % 360) / 45) % 8];
 
@@ -116,7 +119,7 @@ export const DriverConsole: React.FC = () => {
       return;
     }
 
-    if (telemetryMode === 'SIMULATED_ROUTE') {
+    if (DEV_MODE && telemetryMode === 'SIMULATED_ROUTE') {
       const activeRoute = routes.find((r) => r.id === (activeTrip?.routeId || selectedRouteId)) || routes[0];
       const points: [number, number][] =
         activeRoute?.waypoints && activeRoute.waypoints.length > 1
@@ -542,37 +545,49 @@ export const DriverConsole: React.FC = () => {
             ) : (
               <div className="space-y-2.5">
                 {/* Telemetry Mode Toggle */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                    Telemetry Source
-                  </label>
-                  <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-700/80">
-                    <button
-                      type="button"
-                      onClick={() => setTelemetryMode('SIMULATED_ROUTE')}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        telemetryMode === 'SIMULATED_ROUTE'
-                          ? 'bg-blue-600 text-white shadow'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      🚌 MMU Route Auto-Drive
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTelemetryMode('DEVICE_GPS')}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        telemetryMode === 'DEVICE_GPS'
-                          ? 'bg-red-600 text-white shadow'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      📡 Device GPS
-                    </button>
+                {DEV_MODE ? (
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Telemetry Source
+                    </label>
+                    <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-700/80">
+                      <button
+                        type="button"
+                        onClick={() => setTelemetryMode('SIMULATED_ROUTE')}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          telemetryMode === 'SIMULATED_ROUTE'
+                            ? 'bg-blue-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        🚌 MMU Route Auto-Drive
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTelemetryMode('DEVICE_GPS')}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          telemetryMode === 'DEVICE_GPS'
+                            ? 'bg-red-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        📡 Device GPS
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Telemetry Source
+                    </label>
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-300">
+                      <Compass className="w-3.5 h-3.5 text-red-500" />
+                      <span>Device GPS (hardware)</span>
+                    </div>
+                  </div>
+                )}
 
-                {detectedDelhi && telemetryMode === 'DEVICE_GPS' && (
+                {DEV_MODE && detectedDelhi && telemetryMode === 'DEVICE_GPS' && (
                   <div className="p-3 bg-amber-950/80 border border-amber-600/80 rounded-xl text-xs text-amber-200">
                     <div className="font-bold flex items-center gap-1.5 text-white">
                       <span>⚠️</span> Device Location: Delhi NCR (~190 km away)
