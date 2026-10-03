@@ -93,11 +93,6 @@ class ApiService {
     return this.request<Route[]>(`/routes${query}`);
   }
 
-  public async getCampusBuildingsGeoJson(): Promise<any> {
-    const res = await fetch(`${getApiBase()}/routes/campus-buildings`);
-    return res.json();
-  }
-
   // Fleet
   public async getLiveFleet(): Promise<LiveBusState[]> {
     return this.request<LiveBusState[]>('/buses/live');

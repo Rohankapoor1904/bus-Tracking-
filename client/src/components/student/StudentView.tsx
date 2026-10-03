@@ -16,6 +16,9 @@ import {
   ChevronDown,
   X,
   Ticket,
+  Check,
+  Signal,
+  Users,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -32,6 +35,13 @@ export const StudentView: React.FC<StudentViewProps> = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [geofenceAlert, setGeofenceAlert] = useState<string | null>(null);
   const [isDrawerExpanded, setIsDrawerExpanded] = useState<boolean>(false);
+
+  // Ticking clock powering the telemetry freshness indicator
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Fetch initial allocation — bus reflects ONLY real driver telemetry.
   // No trip active => parked STATIC at terminal, status IDLE.
@@ -142,9 +152,30 @@ export const StudentView: React.FC<StudentViewProps> = () => {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center w-full h-[calc(100vh-56px)] md:h-[calc(100vh-64px)] bg-slate-950 text-white">
-        <div className="w-10 h-10 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-3" />
-        <p className="text-xs font-bold text-slate-400">Loading MMU 3D Navigation...</p>
+      <div className="relative flex flex-col items-center justify-center w-full h-[calc(100vh-56px)] md:h-[calc(100vh-64px)] bg-slate-950 text-white overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(226,30,38,0.16),transparent_65%)]" />
+        <div className="relative flex flex-col items-center animate-hud-rise">
+          <img
+            src="/branding/mmu_logo.svg"
+            alt="Maharishi Markandeshwar University"
+            className="h-14 w-auto mb-6 drop-shadow-lg"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = '/branding/mmu_logo.png';
+            }}
+          />
+          <div className="relative w-24 h-24 mb-5">
+            <div className="absolute inset-0 rounded-full border-2 border-slate-800" />
+            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-red-600 border-r-red-600/40 animate-spin" />
+            <div className="absolute inset-3 rounded-full border border-transparent border-t-amber-500 animate-spin [animation-duration:1.6s]" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Bus className="w-7 h-7 text-red-500" />
+            </div>
+          </div>
+          <p className="text-sm font-black tracking-widest text-white uppercase">MMU FleetRadar 3D</p>
+          <p className="text-[11px] font-bold text-slate-500 mt-1.5 animate-live-shimmer">
+            Locking onto campus GPS grid…
+          </p>
+        </div>
       </div>
     );
   }
@@ -152,6 +183,25 @@ export const StudentView: React.FC<StudentViewProps> = () => {
   const isLive = !!liveBus && liveBus.status !== 'IDLE' && (liveBus.speedKmh || 0) > 0.5;
   const distanceKm = liveBus ? (liveBus.distanceToNextStopMeters / 1000).toFixed(1) : '0.0';
   const etaMins = liveBus ? Math.max(1, Math.round(liveBus.etaMinutesUpcomingStop || 0)) : 0;
+
+  // Telemetry freshness — seconds since last authentic driver ping
+  const lastPingMs = liveBus?.lastPing ? new Date(liveBus.lastPing).getTime() : 0;
+  const freshSecs = lastPingMs ? Math.max(0, Math.floor((nowTick - lastPingMs) / 1000)) : null;
+  const freshnessLabel = freshSecs === null ? 'No packets yet' : freshSecs < 5 ? 'just now' : `${freshSecs}s ago`;
+  const isStale = freshSecs !== null && freshSecs > 45;
+
+  // Journey progress derived from route stop sequence vs bus's upcoming stop
+  const routeStops = data?.route.stops ?? [];
+  const nextStopIdx = liveBus ? routeStops.findIndex((s) => s.name === liveBus.upcomingStopName) : -1;
+  const myStopIdx = data?.stop ? routeStops.findIndex((s) => s.id === data!.stop.id) : -1;
+  const passedCount = nextStopIdx > 0 ? nextStopIdx : 0;
+  const stopsToMyStop = myStopIdx > 0 ? myStopIdx : Math.max(1, routeStops.length - 1);
+  const myStopPct = nextStopIdx >= 0 ? Math.max(0, Math.min(100, Math.round((passedCount / stopsToMyStop) * 100))) : 0;
+  const busPassedMyStop = myStopIdx >= 0 && nextStopIdx > myStopIdx;
+  const occupancyPct =
+    liveBus && liveBus.capacity
+      ? Math.min(100, Math.round(((liveBus.boardedCount || 0) / liveBus.capacity) * 100))
+      : 0;
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-slate-950 select-none">
@@ -214,9 +264,22 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                 </>
               )}
             </div>
-            <span className="text-[10px] font-mono bg-white/10 text-slate-300 px-2 py-0.5 rounded-full border border-white/10">
-              {data?.route.routeCode || 'ROUTE-AMB-01'}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                  isStale
+                    ? 'bg-red-950/60 text-red-300 border-red-500/40'
+                    : 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
+                }`}
+                title="Time since last authentic driver GPS packet"
+              >
+                <Signal className={`w-2.5 h-2.5 ${isStale ? 'text-red-400' : 'text-emerald-400 animate-live-shimmer'}`} />
+                {freshnessLabel}
+              </span>
+              <span className="text-[10px] font-mono bg-white/10 text-slate-300 px-2 py-0.5 rounded-full border border-white/10">
+                {data?.route.routeCode || 'ROUTE-AMB-01'}
+              </span>
+            </div>
           </div>
 
           {/* ETA & Distance Hero Card */}
@@ -252,6 +315,35 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               </div>
             </div>
           </div>
+
+          {/* Journey Progress Bar — bus position along route toward my stop */}
+          {routeStops.length > 0 && (
+            <div className="mt-2.5">
+              <div className="flex items-center justify-between text-[10px] font-bold mb-1">
+                <span className="text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-amber-400" />
+                  {busPassedMyStop
+                    ? 'Bus departed your stop'
+                    : `Progress toward ${data?.stop.name || 'your stop'}`}
+                </span>
+                <span className={`font-mono ${busPassedMyStop ? 'text-emerald-400' : 'text-slate-300'}`}>
+                  {passedCount}/{stopsToMyStop} stops
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-slate-800/80 overflow-hidden border border-white/10">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 relative ${
+                    busPassedMyStop
+                      ? 'bg-gradient-to-r from-emerald-600 to-emerald-400'
+                      : 'bg-gradient-to-r from-red-600 via-amber-500 to-amber-400'
+                  }`}
+                  style={{ width: `${myStopPct}%` }}
+                >
+                  <div className="absolute inset-0 progress-stripes rounded-full" />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Micro HUD */}
           <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs text-slate-300">
@@ -316,6 +408,29 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                 <span>Call Driver</span>
               </a>
             </div>
+
+            {/* Live Onboard Occupancy Meter */}
+            <div className="pt-2 border-t border-white/10">
+              <div className="flex items-center justify-between text-[10px] font-bold mb-1">
+                <span className="text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                  <Users className="w-3 h-3 text-cyan-400" /> Onboard Occupancy
+                </span>
+                <span className="text-slate-200 font-mono">
+                  {liveBus?.boardedCount || 0}/{data?.bus.capacity || 42}
+                  <span className={`ml-1.5 ${occupancyPct > 85 ? 'text-red-400' : occupancyPct > 60 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {occupancyPct > 85 ? 'NEAR FULL' : occupancyPct > 60 ? 'FILLING' : 'SEATS FREE'}
+                  </span>
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-800/80 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    occupancyPct > 85 ? 'bg-red-500' : occupancyPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${Math.max(3, occupancyPct)}%` }}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Stoppage Waypoint Sequence */}
@@ -328,26 +443,49 @@ export const StudentView: React.FC<StudentViewProps> = () => {
             </div>
 
             <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-              {data?.route.stops.map((stop) => {
-                const isMyStop = stop.id === data.stop.id;
+              {routeStops.map((stop, idx) => {
+                const isMyStop = data?.stop ? stop.id === data.stop.id : false;
+                const isNext = idx === nextStopIdx;
+                const isPassed = nextStopIdx >= 0 && idx < nextStopIdx;
                 return (
                   <div
                     key={stop.id}
                     className={`flex items-center justify-between p-2 rounded-xl text-xs transition-all ${
                       isMyStop
                         ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold'
-                        : 'text-slate-300 hover:bg-white/5'
+                        : isNext
+                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-bold'
+                          : isPassed
+                            ? 'text-slate-500'
+                            : 'text-slate-300 hover:bg-white/5'
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${isMyStop ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
-                        {stop.stopSequence}
+                      <span
+                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
+                          isMyStop
+                            ? 'bg-amber-500 text-slate-950'
+                            : isNext
+                              ? 'bg-emerald-500 text-slate-950 animate-pulse'
+                              : isPassed
+                                ? 'bg-emerald-900/60 text-emerald-400'
+                                : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {isPassed ? <Check className="w-3 h-3" /> : stop.stopSequence}
                       </span>
-                      <span className="truncate">{stop.name}</span>
+                      <span className={`truncate ${isPassed ? 'line-through decoration-emerald-500/50' : ''}`}>
+                        {stop.name}
+                      </span>
                     </div>
                     {isMyStop && (
                       <span className="text-[9px] bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded font-black tracking-wide flex-shrink-0 ml-1">
                         MY STOP
+                      </span>
+                    )}
+                    {isNext && !isMyStop && (
+                      <span className="text-[9px] bg-emerald-500 text-slate-950 px-1.5 py-0.5 rounded font-black tracking-wide flex-shrink-0 ml-1 animate-pulse">
+                        ARRIVING
                       </span>
                     )}
                   </div>
@@ -406,6 +544,16 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               )}
             </div>
             <div className="flex items-center gap-1.5">
+              <span
+                className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
+                  isStale
+                    ? 'bg-red-950/60 text-red-300 border-red-500/40'
+                    : 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
+                }`}
+              >
+                <Signal className={`w-2.5 h-2.5 ${isStale ? 'text-red-400' : 'text-emerald-400 animate-live-shimmer'}`} />
+                {freshnessLabel}
+              </span>
               <span className="text-[9px] font-mono bg-white/10 text-slate-300 px-2 py-0.5 rounded-full border border-white/10">
                 {data?.route.routeCode || 'AMB-01'}
               </span>
@@ -451,6 +599,27 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Compact journey strip: progress + speed + occupancy */}
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="flex-1 h-1.5 rounded-full bg-slate-800/80 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${
+                  busPassedMyStop
+                    ? 'bg-gradient-to-r from-emerald-600 to-emerald-400'
+                    : 'bg-gradient-to-r from-red-600 via-amber-500 to-amber-400'
+                }`}
+                style={{ width: `${myStopPct}%` }}
+              />
+            </div>
+            <span className="text-[9px] font-mono font-bold text-slate-400 flex-shrink-0">
+              {passedCount}/{stopsToMyStop}
+            </span>
+            <span className="text-[9px] font-mono font-bold text-slate-400 flex-shrink-0 flex items-center gap-1">
+              <Users className="w-2.5 h-2.5 text-cyan-400" />
+              {liveBus?.boardedCount || 0}/{data?.bus.capacity || 42}
+            </span>
           </div>
         </div>
 
@@ -509,17 +678,29 @@ export const StudentView: React.FC<StudentViewProps> = () => {
                 <span className="text-[10px] text-slate-400">{data?.route.stops.length} Stops</span>
               </div>
               <div className="space-y-1 max-h-36 overflow-y-auto">
-                {data?.route.stops.map((stop) => {
-                  const isMyStop = stop.id === data.stop.id;
+                {routeStops.map((stop, idx) => {
+                  const isMyStop = data?.stop ? stop.id === data.stop.id : false;
+                  const isNext = idx === nextStopIdx;
+                  const isPassed = nextStopIdx >= 0 && idx < nextStopIdx;
                   return (
                     <div
                       key={stop.id}
                       className={`flex items-center justify-between p-1.5 rounded-lg text-xs ${
-                        isMyStop ? 'bg-amber-500/20 text-amber-300 font-bold' : 'text-slate-300'
+                        isMyStop
+                          ? 'bg-amber-500/20 text-amber-300 font-bold'
+                          : isNext
+                            ? 'bg-emerald-500/15 text-emerald-300 font-bold'
+                            : isPassed
+                              ? 'text-slate-500'
+                              : 'text-slate-300'
                       }`}
                     >
-                      <span className="truncate">{stop.stopSequence}. {stop.name}</span>
-                      {isMyStop && <span className="text-[9px] bg-amber-500 text-slate-950 px-1 py-0.2 rounded font-black">MY STOP</span>}
+                      <span className={`truncate flex items-center gap-1.5 ${isPassed ? 'line-through decoration-emerald-500/50' : ''}`}>
+                        {isPassed && <Check className="w-3 h-3 text-emerald-500 flex-shrink-0" />}
+                        {stop.stopSequence}. {stop.name}
+                      </span>
+                      {isMyStop && <span className="text-[9px] bg-amber-500 text-slate-950 px-1 py-0.2 rounded font-black flex-shrink-0">MY STOP</span>}
+                      {isNext && !isMyStop && <span className="text-[9px] bg-emerald-500 text-slate-950 px-1 py-0.2 rounded font-black flex-shrink-0 animate-pulse">ARRIVING</span>}
                     </div>
                   );
                 })}

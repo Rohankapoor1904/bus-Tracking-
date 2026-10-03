@@ -24,13 +24,13 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-950/95 backdrop-blur-2xl border-t border-white/10 flex items-center justify-around px-2 z-40 select-none pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_25px_rgba(0,0,0,0.8)]">
         <button
           onClick={() => onChangeRoleView('ADMIN')}
-          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 ${
             activeRoleView === 'ADMIN'
               ? 'text-red-500 font-extrabold'
               : 'text-slate-400 hover:text-slate-200 font-semibold'
           }`}
         >
-          <div className={`p-1 rounded-xl transition-all ${activeRoleView === 'ADMIN' ? 'bg-red-600/20' : ''}`}>
+          <div className={`p-1 rounded-xl transition-all ${activeRoleView === 'ADMIN' ? 'bg-red-600/20 ring-1 ring-red-500/40' : ''}`}>
             <ShieldCheck className="w-5 h-5" />
           </div>
           <span className="text-[10px] mt-0.5 tracking-tight">Fleet Radar</span>
@@ -38,7 +38,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
         <button
           onClick={() => onChangeRoleView('STUDENT')}
-          className="flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-slate-400 hover:text-slate-200 font-semibold transition-all"
+          className="flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-slate-400 hover:text-slate-200 font-semibold transition-all active:scale-95"
         >
           <div className="p-1 rounded-xl">
             <Compass className="w-5 h-5" />
@@ -48,7 +48,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
         <button
           onClick={() => onChangeRoleView('DRIVER')}
-          className="flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-slate-400 hover:text-slate-200 font-semibold transition-all"
+          className="flex-1 flex flex-col items-center justify-center py-1 rounded-xl text-slate-400 hover:text-slate-200 font-semibold transition-all active:scale-95"
         >
           <div className="p-1 rounded-xl">
             <Bus className="w-5 h-5" />

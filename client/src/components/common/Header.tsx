@@ -1,6 +1,21 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { User, UserRole } from '../../types/index.js';
-import { Bus, ShieldCheck, UserCheck, Radio, Compass, Sparkles, Navigation } from 'lucide-react';
+import { Bus, ShieldCheck, UserCheck, Radio, Compass, Sparkles, Navigation, Clock } from 'lucide-react';
+
+function useIstClock(): string {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return now.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
 
 interface HeaderProps {
   currentUser: User | null;
@@ -22,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   const isStudent = activeRoleView === 'STUDENT';
   const isDriver = activeRoleView === 'DRIVER';
   const isAdmin = activeRoleView === 'ADMIN';
+  const istTime = useIstClock();
 
   return (
     <header className="w-full bg-slate-950/92 backdrop-blur-2xl border-b border-white/10 px-3 md:px-6 py-2.5 md:py-3.5 flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
@@ -111,6 +127,13 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* 3. Right Status & Profile Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {/* Live IST Campus Clock */}
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/80 border border-white/10 text-[10px] sm:text-[11px] font-bold text-slate-300 font-mono tracking-wide">
+          <Clock className="w-3 h-3 text-amber-400" />
+          <span>{istTime}</span>
+          <span className="text-slate-500 font-sans text-[9px]">IST</span>
+        </div>
+
         {/* Live WebSocket Telemetry Heartbeat Pill */}
         <div
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold border backdrop-blur-md transition-colors ${

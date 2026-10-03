@@ -40,6 +40,8 @@ scratch/
 tmp/
 temp/
 .eslintcache
+.verify/
+client/.verify/
 
 # Android Build Outputs
 .gradle/

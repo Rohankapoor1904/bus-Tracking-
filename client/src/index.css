@@ -90,6 +90,8 @@
 /* Google Maps 3D Style Extrusion Enhancements */
 .maplibregl-canvas {
   outline: none !important;
+  /* Filmic grade on the GL canvas only — markers/HUD stay untouched */
+  filter: saturate(1.08) contrast(1.05) brightness(1.01);
 }
 
 /* Native Mobile Smooth Spring Sheet */
@@ -137,4 +139,54 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Animated diagonal stripes overlay for journey progress bars */
+@keyframes stripeSlide {
+  0%   { background-position: 0 0; }
+  100% { background-position: 24px 0; }
+}
+
+.progress-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.28) 0px,
+    rgba(255, 255, 255, 0.28) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  background-size: 24px 24px;
+  animation: stripeSlide 0.9s linear infinite;
+}
+
+/* Live telemetry heartbeat shimmer for status chips */
+@keyframes liveShimmer {
+  0%   { opacity: 0.55; }
+  50%  { opacity: 1; }
+  100% { opacity: 0.55; }
+}
+
+.animate-live-shimmer {
+  animation: liveShimmer 1.6s ease-in-out infinite;
+}
+
+/* Soft floating entrance for HUD cards */
+@keyframes hudRise {
+  from { transform: translateY(14px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.animate-hud-rise {
+  animation: hudRise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Radar sweep ring used on the 3D map corner widget */
+@keyframes radarSweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.animate-radar-sweep {
+  animation: radarSweep 3.2s linear infinite;
+  transform-origin: center;
 }
