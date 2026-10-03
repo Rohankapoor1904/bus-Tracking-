@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Route, RouteStop, LiveBusState } from '../../types/index.js';
+import { OPENFREEMAP_STYLES, MAP_PROVIDER, olaStyle, olaTransformRequest } from '../../config/mapProviders.js';
 import { VehicleLerpEngine } from './VehicleLerpEngine.js';
 import { getRoadSnappedPath } from '../../services/roadRouter.js';
 import bakedRoutesData from '../../services/baked-routes.json';
@@ -23,64 +24,8 @@ import {
 
 const bakedRoutes = bakedRoutesData as unknown as Record<string, [number, number][]>;
 
-export type MapStyleType = 'GOOGLE_ROADMAP' | 'GOOGLE_SATELLITE' | 'GOOGLE_3D' | 'DARK_COCKPIT';
+export type MapStyleType = 'VECTOR_3D' | 'SATELLITE' | 'ROADMAP' | 'DARK_COCKPIT';
 export type BuildingViewMode = 'SOLID' | 'GLASS' | 'OFF';
-
-// Genuine Official Google Maps Roadmap Specification
-const GOOGLE_ROADMAP_SPEC: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'google-roadmap': {
-      type: 'raster',
-      tiles: [
-        'https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
-        'https://mt1.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
-        'https://mt2.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
-        'https://mt3.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}',
-      ],
-      tileSize: 256,
-      attribution: '© Google Maps',
-      maxzoom: 22,
-    },
-  },
-  layers: [
-    {
-      id: 'google-roadmap-tiles',
-      type: 'raster',
-      source: 'google-roadmap',
-      minzoom: 0,
-      maxzoom: 22,
-    },
-  ],
-};
-
-// Genuine Official Google Maps Hybrid Satellite Specification
-const GOOGLE_SATELLITE_SPEC: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'google-hybrid': {
-      type: 'raster',
-      tiles: [
-        'https://mt0.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
-        'https://mt1.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
-        'https://mt2.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
-        'https://mt3.google.com/vt/lyrs=y&hl=en&x={x}&y={y}&z={z}',
-      ],
-      tileSize: 256,
-      attribution: '© Google Maps Satellite',
-      maxzoom: 22,
-    },
-  },
-  layers: [
-    {
-      id: 'google-hybrid-tiles',
-      type: 'raster',
-      source: 'google-hybrid',
-      minzoom: 0,
-      maxzoom: 22,
-    },
-  ],
-};
 
 interface MapLibre3DViewProps {
   activeRoute?: Route | null;
@@ -646,6 +591,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   const busHeadingRef = useRef<HTMLDivElement | null>(null);
   const busLivenessRef = useRef<boolean>(false);
   const lastBusBearingRef = useRef<number>(0);
+  const lastFocusedBusRef = useRef<string | null>(null);
   const multiBusMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
   const stopMarkersRef = useRef<maplibregl.Marker[]>([]);
   const lerpEngineRef = useRef<VehicleLerpEngine | null>(null);
@@ -654,7 +600,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   const roadPathRef = useRef<[number, number][] | null>(null);
   const routeColorRef = useRef<string>('#3B82F6');
   const selectedStopRef = useRef<RouteStop | null>(null);
-  const mapStyleRef = useRef<MapStyleType>('GOOGLE_3D');
+  const mapStyleRef = useRef<MapStyleType>('VECTOR_3D');
   const trailRef = useRef<{ routeId?: string; coords: [number, number][]; lastPush: number }>({
     routeId: undefined,
     coords: [],
@@ -662,7 +608,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   });
   const dashRafRef = useRef<number | null>(null);
 
-  const [mapStyle, setMapStyle] = useState<MapStyleType>('GOOGLE_3D');
+  const [mapStyle, setMapStyle] = useState<MapStyleType>('VECTOR_3D');
   const [buildingMode, setBuildingMode] = useState<BuildingViewMode>('SOLID');
   const [_userGeo, setUserGeo] = useState<UserGeoState | null>(null);
   const [geoNotice, setGeoNotice] = useState<{
@@ -860,11 +806,15 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   }, [activeRoute]);
 
   const getStyleConfig = useCallback((style: MapStyleType): any => {
-    if (style === 'GOOGLE_ROADMAP') return GOOGLE_ROADMAP_SPEC;
-    if (style === 'GOOGLE_SATELLITE') return GOOGLE_SATELLITE_SPEC;
-    if (style === 'GOOGLE_3D') return 'https://tiles.openfreemap.org/styles/bright';
-    if (style === 'DARK_COCKPIT') return 'https://tiles.openfreemap.org/styles/dark';
-    return GOOGLE_ROADMAP_SPEC;
+    if (MAP_PROVIDER === 'ola') {
+      if (style === 'SATELLITE') return olaStyle('default-light-standard-satellite');
+      if (style === 'ROADMAP') return olaStyle('default-light-standard');
+      if (style === 'DARK_COCKPIT') return olaStyle('default-dark-standard');
+      return olaStyle('default-light-standard');
+    }
+    // OpenFreeMap (default): key-free vector styles, no raster Google fallback.
+    if (style === 'DARK_COCKPIT') return OPENFREEMAP_STYLES.dark;
+    return OPENFREEMAP_STYLES.bright;
   }, []);
 
   const applySunLighting = useCallback((map: maplibregl.Map) => {
@@ -1444,7 +1394,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: getStyleConfig('GOOGLE_3D'),
+      style: getStyleConfig('VECTOR_3D'),
       center: DEFAULT_CENTER,
       zoom: 16.1,
       pitch: PITCH_3D,
@@ -1452,6 +1402,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       antialias: true,
       maxPitch: 70,
       fadeDuration: 120,
+      transformRequest: MAP_PROVIDER === 'ola' ? olaTransformRequest : undefined,
     });
 
     mapRef.current = map;
@@ -1689,14 +1640,12 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     const seen = new Set<string>();
 
     allBuses.forEach((bus) => {
-      if (!bus.latitude || !bus.longitude) return;
+      // Buses without a GPS fix carry null coordinates and must not be drawn —
+      // otherwise the admin sees a marker at a location the bus isn't at.
+      if (bus.hasFix === false || bus.latitude == null || bus.longitude == null) return;
       seen.add(bus.busId);
-      const health =
-        Date.now() - new Date(bus.lastPing).getTime() < 30_000
-          ? 'LIVE'
-          : Date.now() - new Date(bus.lastPing).getTime() < 120_000
-          ? 'STALE'
-          : 'PARKED';
+      const ageMs = bus.lastPing ? Date.now() - new Date(bus.lastPing).getTime() : Infinity;
+      const health = ageMs < 30_000 ? 'LIVE' : ageMs < 120_000 ? 'STALE' : 'PARKED';
       const ringColor =
         health === 'LIVE' ? '#10b981' : health === 'STALE' ? '#f59e0b' : '#6b7280';
       const overspeed = bus.speedKmh > 75;
@@ -1751,7 +1700,20 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }
 
     const { latitude, longitude, bearing = 0, speedKmh = 0 } = activeBus;
-    if (!latitude || !longitude) return;
+    // A bus that loses its GPS fix must not leave a stale puck behind.
+    if (activeBus.hasFix === false || latitude == null || longitude == null) {
+      if (busMarkerRef.current) {
+        busMarkerRef.current.remove();
+        busMarkerRef.current = null;
+      }
+      lerpEngineRef.current?.destroy();
+      lerpEngineRef.current = null;
+      busElRef.current = null;
+      busHeadingRef.current = null;
+      busLivenessRef.current = false;
+      setCurrentSpeed(0);
+      return;
+    }
 
     const live = isBusLive(activeBus);
     setCurrentSpeed(live ? speedKmh || 0 : 0);
@@ -1843,6 +1805,22 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }
   }, [activeBus, mapLoaded, isFollowingBus, updateTrailSource]);
 
+  // Camera fly-to when a different bus is selected from the fleet list/radar.
+  // This is what makes clicking a bus card focus it on the map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !activeBus) return;
+    if (activeBus.busId === lastFocusedBusRef.current) return;
+    lastFocusedBusRef.current = activeBus.busId;
+    if (activeBus.latitude == null || activeBus.longitude == null) return;
+    map.flyTo({
+      center: [activeBus.longitude, activeBus.latitude],
+      zoom: Math.max(map.getZoom(), 16.5),
+      pitch: PITCH_3D,
+      duration: 1100,
+    });
+  }, [activeBus?.busId, mapLoaded]);
+
   const compassLabel = (b: number) => {
     const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
     return dirs[Math.round(((b % 360) + 360) % 360 / 45) % 8];
@@ -1904,15 +1882,15 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           {/* Map style cycle — 3D → Satellite → Roadmap */}
           <button
             onClick={() => {
-              const cycle: MapStyleType[] = ['GOOGLE_3D', 'GOOGLE_SATELLITE', 'GOOGLE_ROADMAP'];
+              const cycle: MapStyleType[] = ['VECTOR_3D', 'SATELLITE', 'ROADMAP'];
               const idx = cycle.indexOf(mapStyle);
               const next = cycle[(idx + 1) % cycle.length];
               handleStyleChange(next);
             }}
             className={`p-1.5 rounded-xl text-[10px] font-black flex items-center gap-1 transition-all ${
-              mapStyle === 'GOOGLE_3D'
+              mapStyle === 'VECTOR_3D'
                 ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg'
-                : mapStyle === 'GOOGLE_SATELLITE'
+                : mapStyle === 'SATELLITE'
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg'
                 : 'bg-blue-700 text-white'
             }`}
@@ -1920,7 +1898,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           >
             <Building2 className="w-3.5 h-3.5" />
             <span>
-              {mapStyle === 'GOOGLE_3D' ? '3D' : mapStyle === 'GOOGLE_SATELLITE' ? 'SAT' : 'MAP'}
+              {mapStyle === 'VECTOR_3D' ? '3D' : mapStyle === 'SATELLITE' ? 'SAT' : 'MAP'}
             </span>
           </button>
           <button
@@ -1984,9 +1962,9 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         <div className="hidden md:flex items-center bg-slate-950/88 backdrop-blur-2xl p-1 rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0.5">
           {/* 3D Vector — PRIMARY / DEFAULT */}
           <button
-            onClick={() => handleStyleChange('GOOGLE_3D')}
+            onClick={() => handleStyleChange('VECTOR_3D')}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
-              mapStyle === 'GOOGLE_3D'
+              mapStyle === 'VECTOR_3D'
                 ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-[0_0_16px_rgba(245,158,11,0.5)]'
                 : 'text-slate-400 hover:text-amber-300 hover:bg-white/5'
             }`}
@@ -1994,18 +1972,18 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           >
             <Building2 className="w-3.5 h-3.5" />
             <span>3D Vector</span>
-            {mapStyle === 'GOOGLE_3D' && <span className="text-[9px] bg-white/20 px-1 rounded font-bold ml-0.5">LIVE</span>}
+            {mapStyle === 'VECTOR_3D' && <span className="text-[9px] bg-white/20 px-1 rounded font-bold ml-0.5">LIVE</span>}
           </button>
 
           {/* Satellite */}
           <button
-            onClick={() => handleStyleChange('GOOGLE_SATELLITE')}
+            onClick={() => handleStyleChange('SATELLITE')}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
-              mapStyle === 'GOOGLE_SATELLITE'
+              mapStyle === 'SATELLITE'
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-[0_0_16px_rgba(16,185,129,0.4)]'
                 : 'text-slate-400 hover:text-emerald-300 hover:bg-white/5'
             }`}
-            title="Google Satellite + Hybrid Labels"
+            title="Satellite imagery + hybrid labels"
           >
             <Globe className="w-3.5 h-3.5" />
             <span>Satellite</span>
@@ -2016,13 +1994,13 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
           {/* Roadmap (tucked at end) */}
           <button
-            onClick={() => handleStyleChange('GOOGLE_ROADMAP')}
+            onClick={() => handleStyleChange('ROADMAP')}
             className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs font-bold transition-all ${
-              mapStyle === 'GOOGLE_ROADMAP'
+              mapStyle === 'ROADMAP'
                 ? 'bg-blue-600 text-white'
                 : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
             }`}
-            title="Classic Google Roadmap"
+            title="Classic roadmap"
           >
             <MapIcon className="w-3.5 h-3.5" />
           </button>

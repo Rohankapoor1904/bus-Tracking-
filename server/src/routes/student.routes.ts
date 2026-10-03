@@ -59,7 +59,10 @@ studentRouter.get('/allocation', authenticate, async (req: AuthenticatedRequest,
         liveTracking: {
           isTripActive: !!activeTrip,
           tripId: activeTrip?.id,
-          currentCoordinates: telemetry ? [telemetry.longitude, telemetry.latitude] : [76.83756, 30.33268],
+          // Null when the bus has no GPS fix; the client renders "no live fix"
+          // rather than a fabricated campus coordinate.
+          currentCoordinates: telemetry ? [telemetry.longitude, telemetry.latitude] : null,
+          hasFix: !!telemetry,
           // Parked contract: no active trip => zero motion, static terminal fix.
           speedKmh: activeTrip ? telemetry?.speedKmh || 0 : 0,
           bearing: telemetry?.bearing || 0,

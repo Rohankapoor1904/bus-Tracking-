@@ -15,12 +15,30 @@ import {
   ChevronDown,
 } from 'lucide-react';
 
+// Telemetry health states: LIVE (fresh + moving), PARKED (fresh, stationary),
+// STALE (no packet for 15-120s), OFFLINE (never reported or silent > 120s).
+type TelemetryHealth = 'LIVE' | 'STALE' | 'PARKED' | 'OFFLINE';
+
+const HEALTH_DOT: Record<TelemetryHealth, string> = {
+  LIVE: 'bg-emerald-400 animate-pulse',
+  PARKED: 'bg-sky-400',
+  STALE: 'bg-amber-400',
+  OFFLINE: 'bg-slate-500',
+};
+
+const HEALTH_CHIP: Record<TelemetryHealth, string> = {
+  LIVE: 'bg-emerald-950 text-emerald-400 border-emerald-800',
+  PARKED: 'bg-sky-950 text-sky-400 border-sky-800',
+  STALE: 'bg-amber-950 text-amber-400 border-amber-800',
+  OFFLINE: 'bg-slate-800 text-slate-400 border-slate-700',
+};
+
 // Mobile collapsible bottom sheet for fleet list in Radar view
 interface MobileFleetSheetProps {
   liveBuses: LiveBusState[];
   selectedBus: LiveBusState | null;
   routes: Route[];
-  telemetryHealth: (bus: LiveBusState) => 'LIVE' | 'STALE' | 'PARKED';
+  telemetryHealth: (bus: LiveBusState) => TelemetryHealth;
   onSelectBus: (bus: LiveBusState) => void;
 }
 
@@ -48,7 +66,7 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
         <div className="flex items-center gap-2 mt-1">
           <span className="text-xs font-black text-white uppercase tracking-wider">Active Fleet Units</span>
           <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
-            {liveBuses.filter((b) => telemetryHealth(b) === 'LIVE').length} LIVE
+            {liveBuses.filter((b) => { const h = telemetryHealth(b); return h === 'LIVE' || h === 'PARKED'; }).length} TRACKED
           </span>
         </div>
         {expanded ? (
@@ -75,9 +93,7 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
               }`}
             >
               <span
-                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                  health === 'LIVE' ? 'bg-emerald-400 animate-pulse' : health === 'STALE' ? 'bg-amber-400' : 'bg-slate-500'
-                }`}
+                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${HEALTH_DOT[health]}`}
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
@@ -93,9 +109,7 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
                   />
                 </div>
               </div>
-              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase ${
-                health === 'LIVE' ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'
-              }`}>{health}</span>
+              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase ${HEALTH_CHIP[health]}`}>{health}</span>
             </div>
           );
         })}
@@ -115,8 +129,6 @@ export const AdminDashboard: React.FC = () => {
   const [selectedBus, setSelectedBus] = useState<LiveBusState | null>(null);
   // Collapsible bottom sheet state for fleet list on desktop
   const [isFleetSheetExpanded, setIsFleetSheetExpanded] = useState<boolean>(true);
-  // Ref to propagate map flyTo from fleet card clicks
-  const mapFlyToRef = React.useRef<((bus: LiveBusState) => void) | null>(null);
 
   const loadData = async () => {
     // Load independently: a 403/partial failure on one scoped endpoint must not
@@ -175,6 +187,8 @@ export const AdminDashboard: React.FC = () => {
                 altitudeM: update.altitudeM,
                 accuracyM: update.accuracyM,
                 lastPing: update.recordedAt,
+                hasFix: true,
+                status: update.speedKmh > 1 ? 'EN_ROUTE' : b.status,
                 upcomingStopName: update.nextStopName,
                 distanceToNextStopMeters: update.distanceToNextStopMeters,
                 etaMinutesUpcomingStop: update.etaMinutesUpcomingStop,
@@ -185,6 +199,18 @@ export const AdminDashboard: React.FC = () => {
       );
     });
 
+    // Reconcile with the authoritative /live snapshot every 30s. This backstops
+    // any missed WebSocket frames (mobile radio drops, app backgrounding) so the
+    // admin view never shows a stale or dropped driver location.
+    const reconcile = window.setInterval(() => {
+      api.getLiveFleet().then((buses) => {
+        setLiveBuses((prev) => {
+          const byId = new Map(buses.map((b) => [b.busId, b]));
+          return prev.map((b) => byId.get(b.busId) ?? b);
+        });
+      }).catch(() => undefined);
+    }, 30000);
+
     const unsubscribeAlert = socketService.on('EMERGENCY_ALERT', (newAlert: any) => {
       setAlerts((prev) => [newAlert, ...prev]);
     });
@@ -192,6 +218,7 @@ export const AdminDashboard: React.FC = () => {
     return () => {
       unsubscribePos();
       unsubscribeAlert();
+      window.clearInterval(reconcile);
     };
   }, []);
 
@@ -204,13 +231,17 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Telemetry health: fresh packet (< 15s) = healthy, stale = degraded, none = offline
-  const telemetryHealth = (bus: LiveBusState): 'LIVE' | 'STALE' | 'PARKED' => {
-    if (bus.status === 'IDLE' || bus.status === 'MAINTENANCE') return 'PARKED';
+  // Telemetry health: fresh (< 15s) + moving = LIVE; fresh but stationary =
+  // PARKED (GPS on, bus stopped); silent 15-120s = STALE; never reported or
+  // silent > 120s = OFFLINE. This keeps "GPS on but parked" distinct from
+  // "tracker offline", which matters for driver/student safety.
+  const telemetryHealth = (bus: LiveBusState): TelemetryHealth => {
+    if (bus.hasFix === false || !bus.lastPing) return 'OFFLINE';
     const ageMs = nowTick - new Date(bus.lastPing).getTime();
-    if (ageMs < 15000) return 'LIVE';
-    if (ageMs < 120000) return 'STALE';
-    return 'PARKED';
+    if (Number.isNaN(ageMs)) return 'OFFLINE';
+    if (ageMs >= 120000) return 'OFFLINE';
+    if (ageMs >= 15000) return 'STALE';
+    return bus.speedKmh > 1 ? 'LIVE' : 'PARKED';
   };
 
   return (
@@ -344,11 +375,7 @@ export const AdminDashboard: React.FC = () => {
                 activeRoute={selectedRoute}
                 activeBus={selectedBus}
                 allBuses={liveBuses}
-                onSelectBus={(b) => {
-                  setSelectedBus(b);
-                  // Expose flyTo callback so bus card clicks can trigger camera
-                  if (mapFlyToRef.current) mapFlyToRef.current(b);
-                }}
+                onSelectBus={setSelectedBus}
               />
             </div>
 
@@ -382,7 +409,7 @@ export const AdminDashboard: React.FC = () => {
                       Active Fleet Units ({liveBuses.length})
                     </h4>
                     <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
-                      {liveBuses.filter((b) => telemetryHealth(b) === 'LIVE').length} LIVE
+                      {liveBuses.filter((b) => { const h = telemetryHealth(b); return h === 'LIVE' || h === 'PARKED'; }).length} TRACKED
                     </span>
                   </div>
 
@@ -392,12 +419,7 @@ export const AdminDashboard: React.FC = () => {
                       const health = telemetryHealth(b);
                       const loadPct = b.capacity > 0 ? Math.round((b.boardedCount / b.capacity) * 100) : 0;
                       const overspeed = b.speedKmh > 75;
-                      const chip =
-                        health === 'LIVE'
-                          ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                          : health === 'STALE'
-                          ? 'bg-amber-950 text-amber-400 border-amber-800'
-                          : 'bg-slate-800 text-slate-400 border-slate-700';
+                      const chip = HEALTH_CHIP[health];
                       return (
                         <div
                           key={b.busId}
@@ -405,8 +427,6 @@ export const AdminDashboard: React.FC = () => {
                             setSelectedBus(b);
                             const r = routes.find((rt) => rt.id === b.routeId);
                             if (r) setSelectedRoute(r);
-                            // Fly the radar map camera to this bus
-                            if (mapFlyToRef.current) mapFlyToRef.current(b);
                           }}
                           className={`p-3 rounded-2xl border cursor-pointer transition-all hover:scale-[1.01] ${
                             isSelected
@@ -416,7 +436,7 @@ export const AdminDashboard: React.FC = () => {
                         >
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">
-                              <span className={`w-2 h-2 rounded-full ${health === 'LIVE' ? 'bg-emerald-400 animate-pulse' : health === 'STALE' ? 'bg-amber-400' : 'bg-slate-500'}`} />
+                              <span className={`w-2 h-2 rounded-full ${HEALTH_DOT[health]}`} />
                               <span className="font-extrabold text-white text-sm">{b.busNumber}</span>
                               <span className={`text-[9px] font-black px-1.5 py-px rounded border uppercase ${chip}`}>{health}</span>
                             </div>
@@ -443,8 +463,10 @@ export const AdminDashboard: React.FC = () => {
                           <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 pt-2 border-t border-slate-700/50">
                             <span>Driver: <strong className="text-slate-200">{b.driverName}</strong></span>
                             <span className="flex items-center gap-1">
-                              <Activity className={`w-3 h-3 ${health === 'LIVE' ? 'text-emerald-400' : 'text-slate-500'}`} />
-                              {new Date(b.lastPing).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              <Activity className={`w-3 h-3 ${health === 'LIVE' ? 'text-emerald-400' : health === 'PARKED' ? 'text-sky-400' : 'text-slate-500'}`} />
+                              {b.lastPing
+                                ? new Date(b.lastPing).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                : 'No GPS fix'}
                             </span>
                           </div>
                         </div>
@@ -465,7 +487,6 @@ export const AdminDashboard: React.FC = () => {
                 setSelectedBus(b);
                 const r = routes.find((rt) => rt.id === b.routeId);
                 if (r) setSelectedRoute(r);
-                if (mapFlyToRef.current) mapFlyToRef.current(b);
               }}
             />
           </div>

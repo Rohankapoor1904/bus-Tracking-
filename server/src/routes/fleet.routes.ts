@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
 import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { busStatusSchema } from '../validation/schemas.js';
+import { calculateDistanceMeters } from '../db/spatial-engine.js';
 
 export const fleetRouter = Router();
 
@@ -21,6 +22,19 @@ fleetRouter.get('/live', async (_req: Request, res: Response): Promise<void> => 
       buses.map(async (b) => {
         const telemetry = await db.getLatestTelemetry(b.id);
         const trip = await db.getActiveTripByBusId(b.id);
+        // Resolve the route even while parked so the map/UI can render the
+        // corridor and nearest stop instead of a bare parked dot.
+        const routeId = trip?.routeId || b.defaultRouteId;
+        const route = routeId ? await db.getRouteById(routeId) : null;
+        const nearestStop =
+          route && route.stops.length > 0
+            ? telemetry
+              ? route.stops.reduce((best, s) => {
+                  const d = calculateDistanceMeters(telemetry.latitude, telemetry.longitude, s.latitude, s.longitude);
+                  return d < best.d ? { d, stop: s } : best;
+                }, { d: Infinity, stop: route.stops[0] }).stop
+              : route.stops[0]
+            : null;
         // Parked contract: no active trip OR bus not EN_ROUTE => STATIC,
         // zero motion, parked badge. Never replay stale speed.
         const parked = !trip || b.status !== 'EN_ROUTE';
@@ -37,14 +51,17 @@ fleetRouter.get('/live', async (_req: Request, res: Response): Promise<void> => 
           routeId: b.defaultRouteId,
           routeName: b.defaultRouteName,
           tripId: trip?.id,
-          latitude: telemetry?.latitude ?? 30.25045,
-          longitude: telemetry?.longitude ?? 77.04505,
+          // Never fabricate a position: buses without a GPS fix report null
+          // coordinates so the UI can show "no fix" instead of a wrong dot.
+          latitude: telemetry?.latitude ?? null,
+          longitude: telemetry?.longitude ?? null,
           speedKmh: parked ? 0 : telemetry?.speedKmh || 0,
           bearing: telemetry?.bearing || 0,
-          altitudeM: telemetry?.altitudeM || 265,
-          accuracyM: telemetry?.accuracyM || 3.0,
-          lastPing: telemetry?.recordedAt || new Date().toISOString(),
-          upcomingStopName: trip?.nextStopName || 'Bus Parked at Terminal',
+          altitudeM: telemetry?.altitudeM ?? null,
+          accuracyM: telemetry?.accuracyM ?? null,
+          lastPing: telemetry?.recordedAt || null,
+          hasFix: !!telemetry,
+          upcomingStopName: trip?.nextStopName || nearestStop?.name || 'Awaiting departure',
           distanceToNextStopMeters: trip?.distanceToNextStopMeters || 0,
           etaMinutesUpcomingStop: trip?.etaMinutesToNextStop || 0,
         };

@@ -198,8 +198,8 @@ export class WebSocketGateway {
         await TelemetryService.triggerEmergencySOS(
           parsed.data.busId,
           ws.userId || 'driver',
-          parsed.data.latitude ?? 30.25045,
-          parsed.data.longitude ?? 77.04505,
+          parsed.data.latitude,
+          parsed.data.longitude,
           parsed.data.message || 'Driver requested emergency assistance'
         );
         break;

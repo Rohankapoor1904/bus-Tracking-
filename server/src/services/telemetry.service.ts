@@ -128,12 +128,24 @@ export class TelemetryService {
   public static async triggerEmergencySOS(
     busId: string,
     driverId: string,
-    latitude: number,
-    longitude: number,
+    latitude: number | undefined,
+    longitude: number | undefined,
     message: string
   ) {
     const bus = await db.getBusById(busId);
     const trip = await db.getActiveTripByBusId(busId);
+
+    // If the SOS packet carried no fix, fall back to the bus's last authentic
+    // telemetry — never a hardcoded campus coordinate.
+    let lat = latitude;
+    let lng = longitude;
+    if (lat === undefined || lng === undefined) {
+      const last = await db.getLatestTelemetry(busId);
+      if (last) {
+        lat = last.latitude;
+        lng = last.longitude;
+      }
+    }
 
     const alert = await db.createFleetAlert({
       busId,
@@ -142,8 +154,8 @@ export class TelemetryService {
       alertType: 'SOS_EMERGENCY',
       severity: 'CRITICAL',
       message: `CRITICAL SOS: ${message} (Driver: ${bus?.assignedDriverName || 'Driver'})`,
-      latitude,
-      longitude,
+      latitude: lat,
+      longitude: lng,
     });
 
     const emergencyMsg: WSOutboundMessage = {

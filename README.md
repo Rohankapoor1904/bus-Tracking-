@@ -60,6 +60,18 @@ npm run dev
 On first boot the server applies the PostGIS schema (`server/src/db/schema.sql`)
 and seeds the grounded MMU reference data (routes, stops, fleet, demo personas).
 
+#### Map Basemap Provider (optional)
+The 3D viewport defaults to **OpenFreeMap** vector tiles — free, key-free and
+production-ready for a single campus. To use **Ola Maps** (India-tuned vector +
+satellite styles), create `client/.env`:
+```bash
+VITE_MAP_PROVIDER=ola
+VITE_OLA_MAPS_API_KEY=your_ola_maps_api_key
+```
+If Ola is selected without a key the app falls back to OpenFreeMap. The
+undocumented `mt{0-3}.google.com/vt` raster endpoints are intentionally not used
+(they are unsupported and violate Google's Terms of Service).
+
 ### 5. Open in Browser
 - **Frontend App:** [http://localhost:5173/](http://localhost:5173/)
 - **Backend API:** [http://localhost:4000/api/v1](http://localhost:4000/api/v1)

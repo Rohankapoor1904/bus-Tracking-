@@ -125,8 +125,8 @@ class RealTimeSocketService {
 
   public sendEmergencySOS(payload: {
     busId: string;
-    latitude: number;
-    longitude: number;
+    latitude?: number;
+    longitude?: number;
     message: string;
   }) {
     this.sendAction('EMERGENCY_SOS', undefined, payload);

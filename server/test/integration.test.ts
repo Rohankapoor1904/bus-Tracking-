@@ -97,12 +97,29 @@ async function run() {
   assert.strictEqual(forbidden.status, 403);
   ok('Driver blocked from operating an unassigned vehicle (403)');
 
-  // 6. Driver starts own trip
-  const started = await api('/api/v1/trips/start', {
+  // 6. Driver starts own trip (idempotent: recover from a leftover active trip
+  //    if a previous run crashed before its end-lifecycle step).
+  let started = await api('/api/v1/trips/start', {
     method: 'POST',
     headers: { Authorization: `Bearer ${driver.token}` },
     body: JSON.stringify({ busId: 'bus-01', routeId: 'route-amb-01' }),
   });
+  if (started.status === 409) {
+    const live = await api('/api/v1/fleet/live');
+    const stale = live.data?.data?.find((b: any) => b.busId === 'bus-01');
+    if (stale?.tripId) {
+      await api(`/api/v1/trips/${stale.tripId}/end`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${driver.token}` },
+        body: JSON.stringify({ endOdometerKm: 1 }),
+      });
+    }
+    started = await api('/api/v1/trips/start', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${driver.token}` },
+      body: JSON.stringify({ busId: 'bus-01', routeId: 'route-amb-01' }),
+    });
+  }
   assert.strictEqual(started.status, 201, JSON.stringify(started.data));
   const tripId = started.data.data.id;
   ok('Driver starts trip on assigned bus');

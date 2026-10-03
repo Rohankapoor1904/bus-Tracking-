@@ -52,6 +52,7 @@ export const DriverConsole: React.FC = () => {
   const [gpsStatus, setGpsStatus] = useState<'ACQUIRING' | 'LOCKED' | 'DENIED'>('ACQUIRING');
   const [telemetryMode, setTelemetryMode] = useState<'SIMULATED_ROUTE' | 'DEVICE_GPS'>('DEVICE_GPS');
   const [detectedDelhi, setDetectedDelhi] = useState<boolean>(false);
+  const [driverBusId, setDriverBusId] = useState<string>('bus-01');
 
   // Live GPS telemetry — starts PARKED (0 motion) until real GPS fix arrives.
   const [telemetry, setTelemetry] = useState({
@@ -71,8 +72,17 @@ export const DriverConsole: React.FC = () => {
   useEffect(() => {
     const init = async () => {
       try {
+        // Scope the console to the authenticated driver's own bus + route so
+        // trips and telemetry can never be attributed to the wrong vehicle.
+        const me = await api.getMe().catch(() => null);
+        const busId = me?.assignedBusId || 'bus-01';
+        setDriverBusId(busId);
+
         const routesData = await api.getRoutes();
         setRoutes(routesData);
+        if (me?.assignedRouteId && routesData.some((r) => r.id === me.assignedRouteId)) {
+          setSelectedRouteId(me.assignedRouteId);
+        }
         // Do NOT auto-load a fabricated trip. Manifest appears after Start Trip.
       } catch (err) {
         console.error('Failed to load driver routes:', err);
@@ -103,8 +113,54 @@ export const DriverConsole: React.FC = () => {
     };
   }, []);
 
-  // 2. Dual Telemetry Engine:
-  // - SIMULATED_ROUTE: Drives along the MMU route waypoints (smooth 45-55 km/h) for testing from PC/Delhi
+  // 2. Continuous GPS acquisition + parked keep-alive.
+  // lastFixRef holds the latest device fix; the heartbeat re-broadcasts it while
+  // parked so the admin radar can distinguish "GPS on, bus stationary" from
+  // "GPS off". This is what guarantees the driver's location stays visible.
+  const lastFixRef = useRef<{ latitude: number; longitude: number; bearing: number; accuracy: number } | null>(null);
+  const heartbeatRef = useRef<any>(null);
+  const lastPushRef = useRef<number>(0);
+
+  // Continuously acquire the device position from the moment the console opens
+  // (not only during an active trip), so a driver's location is always tracked.
+  useEffect(() => {
+    if (!('geolocation' in navigator)) {
+      setGpsStatus('DENIED');
+      return;
+    }
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        lastFixRef.current = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          bearing: pos.coords.heading ?? 0,
+          accuracy: pos.coords.accuracy,
+        };
+        if (!isBroadcasting) {
+          setGpsStatus('LOCKED');
+          // Reflect the real stationary position on the console even before a
+          // shift starts, so it is never a fabricated campus default.
+          setTelemetry((t) => ({
+            ...t,
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            speedKmh: 0,
+            bearing: pos.coords.heading ?? t.bearing,
+            accuracy: pos.coords.accuracy,
+          }));
+        }
+      },
+      () => {
+        if (!isBroadcasting) setGpsStatus('DENIED');
+      },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+    );
+    return () => navigator.geolocation.clearWatch(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBroadcasting, telemetryMode]);
+
+  // 3. Field Telemetry Engine:
+  // - SIMULATED_ROUTE (dev only): drives along MMU route waypoints for testing
   // - DEVICE_GPS: Live hardware navigator.geolocation.watchPosition
   useEffect(() => {
     if (!isBroadcasting || !activeTrip) {
@@ -217,6 +273,7 @@ export const DriverConsole: React.FC = () => {
 
         if (socketService.isSocketOpen()) {
           socketService.sendDriverTelemetry(packet);
+          lastPushRef.current = Date.now();
           offlineQueue.flush((p) => socketService.sendDriverTelemetry(p)).then((count) => {
             if (count > 0) setPendingQueueCount(0);
           });
@@ -241,10 +298,55 @@ export const DriverConsole: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBroadcasting, activeTrip, telemetryMode, routes, selectedRouteId]);
 
+  // Parked keep-alive: while a shift is active but no fresh fix is arriving
+  // (e.g. speed 0 / stationary), re-broadcast the last known fix on an interval
+  // so the location never appears to drop out. A zero-speed ping is itself a
+  // valid "bus is here, stationary" update.
+  useEffect(() => {
+    if (!isBroadcasting || !activeTrip) {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+      return;
+    }
+    heartbeatRef.current = setInterval(() => {
+      // The live watchPosition already streams fixes; only top up when silent.
+      if (Date.now() - lastPushRef.current < 20000) return;
+      const fix = lastFixRef.current;
+      if (!fix) return;
+      const packet = {
+        tripId: activeTrip.id,
+        busId: activeTrip.busId,
+        routeId: activeTrip.routeId,
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        speed: 0,
+        bearing: fix.bearing,
+        accuracy: fix.accuracy,
+        timestamp: Date.now(),
+      };
+      if (socketService.isSocketOpen()) {
+        socketService.sendDriverTelemetry(packet);
+        lastPushRef.current = Date.now();
+      } else {
+        offlineQueue.enqueue(packet);
+        setPendingQueueCount(offlineQueue.getPendingCount());
+      }
+    }, 20000);
+    return () => {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBroadcasting, activeTrip]);
+
   // Handle Start Trip / Go Live — begins real GPS broadcast
   const handleStartShift = async () => {
     try {
-      const newTrip = await api.startTrip('bus-01', selectedRouteId, 'CAMPUS_BOUND');
+      const newTrip = await api.startTrip(driverBusId, selectedRouteId, 'CAMPUS_BOUND');
       const m = await api.getTripManifest(newTrip.id);
       setManifest(m);
       setActiveTrip(newTrip);
@@ -336,20 +438,28 @@ export const DriverConsole: React.FC = () => {
 
     audioAlert.playEmergencyBeep();
     setSosActive(true);
+    // Include a fix only when GPS is locked; the server then falls back to the
+    // bus's last authentic telemetry instead of a fabricated position.
+    const sosFix =
+      gpsStatus === 'LOCKED'
+        ? { latitude: telemetry.latitude, longitude: telemetry.longitude }
+        : {};
     socketService.sendEmergencySOS({
-      busId: activeTrip?.busId || 'bus-01',
-      latitude: telemetry.latitude,
-      longitude: telemetry.longitude,
+      busId: activeTrip?.busId || driverBusId,
+      ...sosFix,
       message: 'DRIVER EMERGENCY: Mechanical / Medical assistance requested on route!',
     });
   };
 
   const currentStop = manifest?.stopsManifest[currentStopIndex];
 
-  // Build a LiveBusState snapshot from current telemetry for the navigation map
+  // Build a LiveBusState snapshot from current telemetry for the navigation map.
+  // Position is only attached once GPS is LOCKED (real or explicit sim fix) —
+  // otherwise the puck is hidden rather than drawn at a placeholder coordinate.
+  const hasDriverFix = gpsStatus === 'LOCKED';
   const driverLiveBus: LiveBusState | null = activeTrip
     ? {
-        busId: activeTrip.busId || 'bus-01',
+        busId: activeTrip.busId || driverBusId,
         busNumber: 'BUS-01',
         registrationNumber: 'HR-54-A-1993',
         model: 'Tata Marcopolo Deluxe AC',
@@ -360,13 +470,14 @@ export const DriverConsole: React.FC = () => {
         driverPhone: '',
         routeId: activeTrip.routeId || selectedRouteId,
         routeName: manifest?.route.name || 'Ambala Express',
-        latitude: telemetry.latitude,
-        longitude: telemetry.longitude,
+        latitude: hasDriverFix ? telemetry.latitude : null,
+        longitude: hasDriverFix ? telemetry.longitude : null,
         speedKmh: telemetry.speedKmh,
         bearing: telemetry.bearing,
-        altitudeM: 268,
+        altitudeM: null,
         accuracyM: telemetry.accuracy,
-        lastPing: new Date().toISOString(),
+        lastPing: hasDriverFix ? new Date().toISOString() : null,
+        hasFix: hasDriverFix,
         upcomingStopName: manifest?.stopsManifest[currentStopIndex]?.stopName || 'Next Stop',
         distanceToNextStopMeters: 0,
         etaMinutesUpcomingStop: 0,
