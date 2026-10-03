@@ -135,16 +135,41 @@ const SKY_DAY: any = {
   'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 8, 1, 13, 0.5],
 };
 
-// Warm sandstone ramp for real OSM footprints — premium "miniature city" look
-// that matches the procedural village houses and the warm key light.
+// Warm sandstone ramp (kept for reference; BUILDING_COLOR_VARIED is used below)
 const BUILDING_COLOR_RAMP: any = [
-  'interpolate',
-  ['linear'],
+  'interpolate', ['linear'],
   ['coalesce', ['get', 'render_height'], ['get', 'height'], 6],
-  0, '#f1ebdd',
-  10, '#e6dcc4',
-  25, '#cdbfa0',
-  50, '#a5947a',
+  0, '#eadfc6', 10, '#dbcaa6', 25, '#bfa478', 50, '#8e7a5a',
+];
+
+// Google Earth-style per-building colour variety — feature ID modulo gives each
+// structure a distinct but consistent tint, simulating varied rooftop materials
+// visible in satellite imagery. Height tier keeps tall blocks darker.
+const BUILDING_COLOR_VARIED: any = [
+  'case',
+  // Tall (> 25 m) — deep umber/terracotta
+  ['>', ['coalesce', ['get', 'render_height'], ['get', 'height'], 0], 25],
+  ['case',
+    ['==', ['%', ['id'], 3], 0], '#a89062',
+    ['==', ['%', ['id'], 3], 1], '#b39870',
+    '#bfa478'
+  ],
+  // Medium (> 10 m) — mid warm stone
+  ['>', ['coalesce', ['get', 'render_height'], ['get', 'height'], 0], 10],
+  ['case',
+    ['==', ['%', ['id'], 4], 0], '#ceb48a',
+    ['==', ['%', ['id'], 4], 1], '#d8c09a',
+    ['==', ['%', ['id'], 4], 2], '#c4aa80',
+    '#d0bc90'
+  ],
+  // Short / default — pale cream spectrum
+  ['case',
+    ['==', ['%', ['id'], 5], 0], '#ede0c6',
+    ['==', ['%', ['id'], 5], 1], '#e5d5b5',
+    ['==', ['%', ['id'], 5], 2], '#f2e4cc',
+    ['==', ['%', ['id'], 5], 3], '#e8d8be',
+    '#ead4b8'
+  ]
 ];
 
 const SKY_NIGHT: any = {
@@ -186,11 +211,13 @@ function buildTerrainTexture(): string | null {
       seed = (seed * 16807) % 2147483647;
       return (seed - 1) / 2147483646;
     };
-    for (let i = 0; i < 320; i++) {
+    // 1024 px over a 154 km box => ~150 m/px. Keep blobs small (≈2–8 km) so the
+    // tint reads as micro-relief grain, not giant flat colour fields.
+    for (let i = 0; i < 1050; i++) {
       const cx = rnd() * size;
       const cy = rnd() * size;
-      const w = 26 + rnd() * 96;
-      const h = 20 + rnd() * 74;
+      const w = 14 + rnd() * 38;
+      const h = 12 + rnd() * 32;
       const j1 = (rnd() - 0.5) * 20;
       const j2 = (rnd() - 0.5) * 20;
       const j3 = (rnd() - 0.5) * 20;
@@ -245,8 +272,8 @@ function buildFieldMosaic(): any {
     if (axis[axis.length - 1] < end) axis.push(end);
     return axis;
   };
-  const cols = buildAxis(w, e, 0.0032, 0.0095); // ≈300–880 m plots
-  const rows = buildAxis(s, n, 0.0028, 0.0085); // ≈310–940 m plots
+  const cols = buildAxis(w, e, 0.0026, 0.0075); // ≈250–720 m plots
+  const rows = buildAxis(s, n, 0.0022, 0.0068); // ≈245–755 m plots
   const nI = cols.length;
   const nJ = rows.length;
   // Shared jittered vertices (interior only) so adjacent plots never gap
@@ -267,6 +294,7 @@ function buildFieldMosaic(): any {
   const palette = [
     '#d2c390', '#c7bd7e', '#bdba74', '#b0b76b', '#cdc398', '#c0b177',
     '#b5b06b', '#d0c89a', '#a9b268', '#d8cda0', '#cabf88', '#babe7b',
+    '#9fae5f', '#cfa95e', '#b7c47c', '#8ba557', '#a8b86e',
   ];
   const zoneColor = (za: number, zb: number) => {
     const h = (za * 73856093) ^ (zb * 19349663);
@@ -275,9 +303,9 @@ function buildFieldMosaic(): any {
   const features: any[] = [];
   for (let i = 0; i < nI - 1; i++) {
     for (let j = 0; j < nJ - 1; j++) {
-      // Colour by ~2.5 km zone with 45 % noise => regional crop groupings
-      const zc = zoneColor(Math.floor(i / 5), Math.floor(j / 5));
-      const c = rnd() < 0.55 ? zc : palette[(rnd() * palette.length) | 0];
+      // Colour by ~1.2 km zone with 55 % noise => regional crop groupings
+      const zc = zoneColor(Math.floor(i / 2), Math.floor(j / 2));
+      const c = rnd() < 0.45 ? zc : palette[(rnd() * palette.length) | 0];
       features.push({
         type: 'Feature',
         properties: { c },
@@ -322,6 +350,23 @@ const FARMSTEAD_KEEPOUT: [number, number, number][] = [
   [76.8142, 30.3429, 1200], // MMU Sadopur campus
   [76.8700, 29.9750, 2600], // Kurukshetra city
   [76.8712, 30.1678, 1400], // Shahbad Markanda
+];
+// Vegetation-only keepout: campuses are green spaces in reality, so canopy may
+// run right up to their ring roads — only the built core stays clear. Without
+// this the 1600 m campus keepout turns the default view into bare field.
+const VEG_KEEPOUT: [number, number, number][] = [
+  [76.8375, 30.3327, 3800], // Ambala Cantt / city
+  [76.8189, 30.6432, 2600], // Zirakpur
+  [77.04505, 30.25045, 480], // MMU Mullana campus core
+  [76.8142, 30.3429, 380], // MMU Sadopur campus core
+  [76.8700, 29.9750, 2600], // Kurukshetra city
+  [76.8712, 30.1678, 1400], // Shahbad Markanda
+];
+// Extra canopy belts: campuses get a green boundary ring like the villages,
+// which is what actually makes the default campus view read as landscaped.
+const CAMPUS_BELT_SITES: [number, number, number][] = [
+  [77.04505, 30.25045, 520], // MMU Mullana
+  [76.8142, 30.3429, 400], // MMU Sadopur
 ];
 const HOUSE_PALETTE = ['#eae3d4', '#e3d9c8', '#dcd1bd', '#e8dfce', '#d7cbb4', '#efe9db', '#cfc0a4', '#d9d2c4'];
 const M_PER_DEG_LAT = 111320;
@@ -455,7 +500,7 @@ function buildVegetation(): any {
     });
   };
   const inKeepout = (lon: number, lat: number): boolean => {
-    for (const [kx, ky, kr] of FARMSTEAD_KEEPOUT) {
+    for (const [kx, ky, kr] of VEG_KEEPOUT) {
       const dx = (lon - kx) * M_PER_DEG_LON;
       const dy = (lat - ky) * M_PER_DEG_LAT;
       if (dx * dx + dy * dy < kr * kr) return true;
@@ -464,7 +509,7 @@ function buildVegetation(): any {
   };
 
   // Canopy belt hugging every village edge — trees ring the built-up core
-  for (const [lon, lat, rM] of VILLAGE_SITES) {
+  for (const [lon, lat, rM] of [...VILLAGE_SITES, ...CAMPUS_BELT_SITES]) {
     const pitch = 13;
     const outer = rM + 90;
     const half = Math.ceil(outer / pitch);
@@ -474,7 +519,7 @@ function buildVegetation(): any {
         const ey = j * pitch + (rnd() - 0.5) * pitch;
         const d2 = ex * ex + ey * ey;
         if (d2 < rM * rM * 0.9 || d2 > outer * outer) continue;
-        if (rnd() < 0.62) continue;
+        if (rnd() < 0.58) continue;
         pushTree(lon + ex / M_PER_DEG_LON, lat + ey / M_PER_DEG_LAT, 3 + rnd() * 4.4);
       }
     }
@@ -484,11 +529,11 @@ function buildVegetation(): any {
   const cell = 0.0062;
   for (let L = FIELDS_BOX[0]; L < FIELDS_BOX[2]; L += cell) {
     for (let B = FIELDS_BOX[1]; B < FIELDS_BOX[3]; B += cell) {
-      if (rnd() > 0.42) continue;
+      if (rnd() > 0.72) continue;
       const cx = L + rnd() * cell;
       const cy = B + rnd() * cell;
       if (inKeepout(cx, cy)) continue;
-      const k = 2 + Math.floor(rnd() * 4);
+      const k = 3 + Math.floor(rnd() * 5);
       for (let q = 0; q < k; q++) {
         pushTree(cx + (rnd() - 0.5) * 0.0013, cy + (rnd() - 0.5) * 0.0012, 3 + rnd() * 4.6);
       }
@@ -499,7 +544,7 @@ function buildVegetation(): any {
   const fcell = 0.0042;
   for (let L = FIELDS_BOX[0]; L < FIELDS_BOX[2]; L += fcell) {
     for (let B = FIELDS_BOX[1]; B < FIELDS_BOX[3]; B += fcell) {
-      if (rnd() > 0.1) continue;
+      if (rnd() > 0.24) continue;
       const cx = L + rnd() * fcell;
       const cy = B + rnd() * fcell;
       if (inKeepout(cx, cy)) continue;
@@ -823,14 +868,15 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   }, []);
 
   const applySunLighting = useCallback((map: maplibregl.Map) => {
-    // Ambient + directional sun tuned for Ambala latitude (~30.25N).
-    // Rich cast shadows across 3D solid structures
+    // Directional sun anchored to the map (not the viewport) so shadows stay
+    // consistent as the user pans — same as Google Earth's fixed-sun behaviour.
+    // Position tuned for ~10 am at Ambala latitude (30.25 N).
     try {
       map.setLight({
-        anchor: 'viewport',
-        color: '#FFF8EB',
-        intensity: 0.85,
-        position: [1.35, 195, 42],
+        anchor: 'map',
+        color: '#FFF4E0',
+        intensity: 0.72,
+        position: [1.5, 210, 55],
       });
     } catch {
       /* older style without light support */
@@ -1207,10 +1253,15 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       const firstLabelId = layers.find(
         (l: any) => l.type === 'symbol' && l.layout?.['text-field']
       )?.id;
-      const beforeId =
-        buildingLayerIdRef.current && map.getLayer(buildingLayerIdRef.current)
-          ? buildingLayerIdRef.current
-          : firstLabelId;
+      // Roads must render ABOVE trees. In OpenFreeMap bright the transportation
+      // layers precede building-3d, so anchoring at building-3d would leave trees
+      // above every road line. Anchor before the first transportation layer instead.
+      const firstRoadLayer = layers.find(
+        (l: any) =>
+          l['source-layer'] === 'transportation' ||
+          l['source-layer'] === 'transportation_name'
+      )?.id;
+      const beforeId = firstRoadLayer || buildingLayerIdRef.current || firstLabelId;
       map.addLayer(
         {
           id: 'fleet-vegetation',
@@ -1219,9 +1270,24 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           minzoom: 12.8,
           paint: {
             'circle-color': ['get', 'c'],
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 12.8, 1.4, 15, 2.8, 17, 5.4, 19, 9.5],
+            // Per-tree canopy size (r metres) modulates the zoom ramp so groves
+            // read as varied clumps instead of a uniform stipple field.
+            // NOTE: data expr must sit INSIDE the stops — MapLibre silently
+            // drops a top-level ['*', zoomInterp, dataExpr] product.
+            'circle-radius': [
+              'interpolate', ['linear'], ['zoom'],
+              12.8, ['*', ['coalesce', ['get', 'r'], 5.5], 0.28],
+              15, ['*', ['coalesce', ['get', 'r'], 5.5], 0.6],
+              17, ['*', ['coalesce', ['get', 'r'], 5.5], 1.05],
+              19, ['*', ['coalesce', ['get', 'r'], 5.5], 1.73],
+            ],
             'circle-opacity': ['interpolate', ['linear'], ['zoom'], 12.8, 0, 13.6, 0.85],
             'circle-blur': 0.28,
+            // Thin dark stroke simulates the shadow rim of a tree canopy,
+            // matching the subtle edge-darkening visible in Google Earth.
+            'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 13, 0, 15.5, 0.7],
+            'circle-stroke-color': '#1e4f18',
+            'circle-stroke-opacity': 0.55,
           },
         } as any,
         beforeId
@@ -1265,6 +1331,20 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         const existing = style.layers.find((l: any) => l.type === 'fill-extrusion');
         if (existing) {
           buildingLayerIdRef.current = existing.id;
+          // Apply our warm palette + Google Earth-style AO to the style's own
+          // building layer (can't do this in the paint definition since the layer
+          // already exists in the style). Wrapped separately so a single unsupported
+          // property doesn't block the rest.
+          try { map.setPaintProperty(existing.id, 'fill-extrusion-color', BUILDING_COLOR_VARIED); } catch { /* */ }
+          try {
+            map.setPaintProperty(existing.id, 'fill-extrusion-ambient-occlusion-intensity', 0.35);
+            map.setPaintProperty(existing.id, 'fill-extrusion-ambient-occlusion-radius', 3.5);
+          } catch { /* AO not supported on this runtime */ }
+          try {
+            map.setPaintProperty(existing.id, 'fill-extrusion-flood-light-intensity', 0.12);
+            map.setPaintProperty(existing.id, 'fill-extrusion-flood-light-color', '#fffbef');
+            map.setPaintProperty(existing.id, 'fill-extrusion-flood-light-ground-radius', 5);
+          } catch { /* flood-light not supported on this runtime */ }
         } else if (map.getSource('openmaptiles')) {
           const firstLabelId = style.layers.find(
             (l: any) => l.type === 'symbol' && l.layout?.['text-field']
@@ -1279,7 +1359,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
                 minzoom: 14,
                 filter: ['==', ['geometry-type'], 'Polygon'],
                 paint: {
-                  'fill-extrusion-color': BUILDING_COLOR_RAMP,
+                  'fill-extrusion-color': BUILDING_COLOR_VARIED,
                   'fill-extrusion-height': [
                     'interpolate', ['linear'], ['zoom'],
                     14, 0,
@@ -1375,7 +1455,6 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     });
 
     mapRef.current = map;
-    (window as any).__fleetMap = map; // TEMP verify hook — remove after visual QA
     // bright sprite bundle lacks a few icons (swimming_pool, gate) -> feed a
     // transparent 1x1 so MapLibre never logs "image could not be loaded" errors
     map.on('styleimagemissing', (e) => {
@@ -1796,9 +1875,9 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         </div>
       )}
 
-      {/* 2. Live Bus Status HUD — top left floating card */}
+      {/* 2. Live Bus Status HUD — top left floating card (desktop only; mobile bottom sheet covers this) */}
       {activeBus && (
-        <div className={`absolute ${isCockpitMode ? 'top-3 left-3' : 'top-16 md:top-3 left-3'} z-20 pointer-events-auto`}>
+        <div className={`hidden md:block absolute ${isCockpitMode ? 'top-3 left-3' : 'top-3 left-3'} z-20 pointer-events-auto`}>
           <div className="bg-slate-950/90 backdrop-blur-2xl border border-white/10 rounded-2xl px-3.5 py-2.5 shadow-2xl flex items-center gap-2.5 max-w-[240px]">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isLive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             <div className="min-w-0">
@@ -2035,7 +2114,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       </div>
 
       {/* 4. High-Precision Real-Time Speedometer & Telemetry Cockpit HUD */}
-      <div className="absolute bottom-40 md:bottom-5 left-3 md:left-5 z-20 flex flex-col items-start gap-2 pointer-events-auto select-none">
+      <div className="absolute bottom-[11.5rem] md:bottom-5 left-3 md:left-5 z-20 flex flex-col items-start gap-2 pointer-events-auto select-none">
         <div className="flex items-center gap-3 md:gap-3.5 bg-slate-950/85 backdrop-blur-2xl p-2.5 md:p-3 rounded-2xl md:rounded-3xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
           {/* Radial Circular Speedometer Gauge */}
           <div className="relative w-14 h-14 md:w-16 md:h-16 flex items-center justify-center flex-shrink-0">
@@ -2146,7 +2225,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       )}
 
       {/* 6. North Compass Rose — tap to reset north */}
-      <div className="absolute bottom-40 md:bottom-5 right-3 md:right-5 z-10 pointer-events-auto select-none">
+      <div className="absolute bottom-[11.5rem] md:bottom-5 right-3 md:right-5 z-10 pointer-events-auto select-none">
         <button
           onClick={resetNorth}
           className="w-9 h-9 rounded-full bg-slate-950/80 backdrop-blur-xl border border-white/10 flex items-center justify-center shadow-xl hover:border-white/30 transition-colors cursor-pointer"
