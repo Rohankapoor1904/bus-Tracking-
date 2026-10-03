@@ -375,7 +375,7 @@ export const DriverConsole: React.FC = () => {
     : null;
 
   return (
-    <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col md:flex-row overflow-hidden select-none">
+    <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col md:flex-row overflow-hidden select-none pb-14 md:pb-0">
       {/* Mobile Driver Segmented Tab Navigation (< md) */}
       <div className="md:hidden flex items-center bg-slate-900/95 border-b border-slate-800 p-2 gap-2 flex-shrink-0">
         <button
@@ -642,7 +642,7 @@ export const DriverConsole: React.FC = () => {
             isCockpitMode={true}
           />
           {/* Overlay: next stop info */}
-          <div className="absolute bottom-4 left-3 right-3 z-20">
+          <div className="absolute bottom-16 left-3 right-3 z-20">
             <div className="bg-slate-950/90 backdrop-blur-xl border border-white/10 rounded-2xl p-3 flex items-center justify-between shadow-2xl">
               <div>
                 <p className="text-[10px] text-slate-400 uppercase font-bold">Next Stop</p>

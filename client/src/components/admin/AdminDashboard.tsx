@@ -35,8 +35,8 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
 
   return (
     <div
-      className={`md:hidden absolute bottom-0 left-0 right-0 z-30 bg-slate-950/95 backdrop-blur-2xl border-t border-white/10 shadow-[0_-12px_40px_rgba(0,0,0,0.6)] rounded-t-3xl transition-all duration-300 ease-out ${
-        expanded ? 'max-h-[70vh]' : 'max-h-[72px]'
+      className={`md:hidden absolute bottom-16 left-0 right-0 z-30 bg-slate-950/95 backdrop-blur-2xl border-t border-white/10 shadow-[0_-12px_40px_rgba(0,0,0,0.6)] rounded-t-3xl transition-all duration-300 ease-out ${
+        expanded ? 'max-h-[60vh]' : 'max-h-[58px]'
       } flex flex-col overflow-hidden`}
     >
       {/* Drag handle + header */}
@@ -209,7 +209,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
+    <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col overflow-hidden pb-16 md:pb-0">
       {/* 1. Top KPI Summary Cards */}
       <div className="p-2.5 sm:p-4 bg-slate-900/90 border-b border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 z-10 shadow-lg flex-shrink-0">
         {/* Metric 1: Fleet in Transit */}

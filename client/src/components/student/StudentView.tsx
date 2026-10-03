@@ -509,23 +509,23 @@ export const StudentView: React.FC<StudentViewProps> = () => {
 
       {/* 3. Mobile: Floating Frosted-Glass Bottom Sheet */}
       <div
-        className={`md:hidden fixed inset-x-2 transition-all duration-300 ease-out z-30 pointer-events-auto bg-slate-950/90 backdrop-blur-3xl border border-white/15 shadow-[0_16px_50px_rgba(0,0,0,0.75)] rounded-3xl overflow-hidden flex flex-col ${
+        className={`md:hidden fixed inset-x-2 transition-all duration-300 ease-out z-30 pointer-events-auto bg-slate-950/95 backdrop-blur-3xl border border-white/15 shadow-[0_16px_50px_rgba(0,0,0,0.75)] rounded-3xl overflow-hidden flex flex-col ${
           isDrawerExpanded
             ? 'bottom-2 top-16 rounded-3xl'
-            : 'bottom-2 h-[142px]'
+            : 'bottom-2 h-[148px]'
         }`}
         style={{ paddingBottom: 'max(0.4rem, env(safe-area-inset-bottom))' }}
       >
         {/* Mobile Drag Handle Bar */}
         <div
           onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
-          className="flex flex-col items-center pt-2 pb-1 cursor-pointer bg-slate-950/80 active:bg-slate-900 select-none"
+          className="flex flex-col items-center pt-1.5 pb-0.5 cursor-pointer bg-slate-950/80 active:bg-slate-900 select-none"
         >
-          <div className="w-12 h-1.5 bg-slate-600 rounded-full mb-1"></div>
+          <div className="w-10 h-1 bg-slate-600 rounded-full"></div>
         </div>
 
         {/* Live Transit Peek Header */}
-        <div className="px-3.5 py-1.5 bg-gradient-to-br from-slate-900/90 to-slate-950/90 flex-shrink-0">
+        <div className="px-3 py-1 bg-gradient-to-br from-slate-900/90 to-slate-950/90 flex-shrink-0">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
               {isLive ? (
@@ -568,7 +568,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
           </div>
 
           {/* ETA & Distance Hero Card */}
-          <div className="grid grid-cols-2 gap-2 bg-white/5 p-2 rounded-2xl border border-white/10 shadow-inner">
+          <div className="grid grid-cols-2 gap-2 bg-white/5 p-1.5 rounded-xl border border-white/10 shadow-inner">
             <div className="flex flex-col">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                 <Clock className="w-3 h-3 text-amber-400" /> Arrival Time
@@ -576,11 +576,11 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               <div className="flex items-baseline gap-1 mt-0.5">
                 {isLive ? (
                   <>
-                    <span className="text-xl font-black text-white tracking-tight">~{etaMins}</span>
-                    <span className="text-xs font-bold text-amber-400">mins</span>
+                    <span className="text-lg font-black text-white tracking-tight">~{etaMins}</span>
+                    <span className="text-[10px] font-bold text-amber-400">mins</span>
                   </>
                 ) : (
-                  <span className="text-base font-black text-amber-400 tracking-tight">At Depot</span>
+                  <span className="text-sm font-black text-amber-400 tracking-tight">At Depot</span>
                 )}
               </div>
             </div>
@@ -591,18 +591,18 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               <div className="flex items-baseline gap-1 mt-0.5">
                 {isLive ? (
                   <>
-                    <span className="text-xl font-black text-white tracking-tight">{distanceKm}</span>
-                    <span className="text-xs font-bold text-red-400">km</span>
+                    <span className="text-lg font-black text-white tracking-tight">{distanceKm}</span>
+                    <span className="text-[10px] font-bold text-red-400">km</span>
                   </>
                 ) : (
-                  <span className="text-base font-black text-slate-300 tracking-tight">Stationary</span>
+                  <span className="text-sm font-black text-slate-300 tracking-tight">Stationary</span>
                 )}
               </div>
             </div>
           </div>
 
           {/* Compact journey strip: progress + speed + occupancy */}
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-1 flex items-center gap-2">
             <div className="flex-1 h-1.5 rounded-full bg-slate-800/80 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-700 ${

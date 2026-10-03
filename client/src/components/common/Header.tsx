@@ -40,14 +40,14 @@ export const Header: React.FC<HeaderProps> = ({
   const istTime = useIstClock();
 
   return (
-    <header className="w-full bg-slate-950/92 backdrop-blur-2xl border-b border-white/10 px-3 md:px-6 py-2.5 md:py-3.5 flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
+    <header className="w-full bg-slate-950/92 backdrop-blur-2xl border-b border-white/10 px-2 sm:px-3 md:px-6 py-2 md:py-3.5 flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
       {/* 1. Left Institutional Logo & Identity */}
-      <div className="flex items-center gap-2.5 md:gap-3.5">
+      <div className="flex items-center gap-2 md:gap-3.5">
         <div className="relative flex items-center">
           <img
             src="/branding/mmu_logo.svg"
             alt="Maharishi Markandeshwar University"
-            className="h-8 md:h-10 w-auto max-w-[140px] sm:max-w-[190px] md:max-w-[230px] object-contain drop-shadow"
+            className="h-7 sm:h-8 md:h-10 w-auto max-w-[110px] sm:max-w-[190px] md:max-w-[230px] object-contain drop-shadow"
             onError={(e) => {
               (e.currentTarget as HTMLImageElement).src = '/branding/mmu_logo.png';
             }}
