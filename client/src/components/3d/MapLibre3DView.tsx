@@ -1900,7 +1900,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       <div className="absolute top-16 md:top-4 right-2 sm:right-4 z-20 flex flex-col items-end gap-2 pointer-events-auto">
 
         {/* ── Mobile compact toolbar ── */}
-        <div className="flex md:hidden items-center bg-slate-950/90 backdrop-blur-xl p-1 rounded-2xl border border-white/10 shadow-2xl gap-1">
+        <div className="flex md:hidden flex-wrap items-center justify-end bg-slate-950/90 backdrop-blur-xl p-1 rounded-2xl border border-white/10 shadow-2xl gap-1 max-w-[calc(100vw-1rem)]">
           {/* Map style cycle — 3D → Satellite → Roadmap */}
           <button
             onClick={() => {
@@ -2114,10 +2114,10 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       </div>
 
       {/* 4. High-Precision Real-Time Speedometer & Telemetry Cockpit HUD */}
-      <div className="absolute bottom-[11.5rem] md:bottom-5 left-3 md:left-5 z-20 flex flex-col items-start gap-2 pointer-events-auto select-none">
-        <div className="flex items-center gap-3 md:gap-3.5 bg-slate-950/85 backdrop-blur-2xl p-2.5 md:p-3 rounded-2xl md:rounded-3xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+      <div className="absolute bottom-[10rem] sm:bottom-[11.5rem] md:bottom-5 left-2 sm:left-3 md:left-5 z-20 flex flex-col items-start gap-1.5 md:gap-2 pointer-events-auto select-none">
+        <div className="flex items-center gap-2 md:gap-3.5 bg-slate-950/85 backdrop-blur-2xl p-2 md:p-3 rounded-2xl md:rounded-3xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
           {/* Radial Circular Speedometer Gauge */}
-          <div className="relative w-14 h-14 md:w-16 md:h-16 flex items-center justify-center flex-shrink-0">
+          <div className="relative w-11 h-11 md:w-16 md:h-16 flex items-center justify-center flex-shrink-0">
             <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 80 80">
               {/* Background Arc */}
               <circle
@@ -2173,7 +2173,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
         {/* Journey Progress Strip — live corridor advancement */}
         {journey && (
-          <div className="w-[220px] md:w-[280px] bg-slate-950/85 backdrop-blur-2xl px-3 py-2.5 rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+          <div className="w-[180px] sm:w-[220px] md:w-[280px] bg-slate-950/85 backdrop-blur-2xl px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
             <div className="flex items-center justify-between gap-2 mb-1">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
                 <Flag className="w-3 h-3 text-amber-400" /> Next Stop
@@ -2225,7 +2225,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       )}
 
       {/* 6. North Compass Rose — tap to reset north */}
-      <div className="absolute bottom-[11.5rem] md:bottom-5 right-3 md:right-5 z-10 pointer-events-auto select-none">
+      <div className="absolute bottom-[10rem] sm:bottom-[11.5rem] md:bottom-5 right-2 sm:right-3 md:right-5 z-10 pointer-events-auto select-none">
         <button
           onClick={resetNorth}
           className="w-9 h-9 rounded-full bg-slate-950/80 backdrop-blur-xl border border-white/10 flex items-center justify-center shadow-xl hover:border-white/30 transition-colors cursor-pointer"
