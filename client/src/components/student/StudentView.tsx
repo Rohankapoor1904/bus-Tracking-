@@ -23,6 +23,9 @@ interface StudentViewProps {
   onOpenAuth: () => void;
 }
 
+// Developer-mode flag: test controls are only visible during local dev
+const DEV_MODE = import.meta.env.DEV === true;
+
 export const StudentView: React.FC<StudentViewProps> = () => {
   const [data, setData] = useState<StudentAllocationResponse | null>(null);
   const [liveBus, setLiveBus] = useState<LiveBusState | null>(null);
@@ -102,8 +105,8 @@ export const StudentView: React.FC<StudentViewProps> = () => {
           altitudeM: update.altitudeM ?? prev.altitudeM,
           accuracyM: update.accuracyM ?? prev.accuracyM,
           lastPing: update.recordedAt || new Date().toISOString(),
-          status: live ? 'EN_ROUTE' : prev.status === 'IDLE' && live ? 'EN_ROUTE' : prev.status,
-          upcomingStopName: update.nextStopName || prev.upcomingStopName,
+          status: live ? 'EN_ROUTE' : 'IDLE',
+          upcomingStopName: live ? (update.nextStopName || prev.upcomingStopName) : 'Bus Parked at Terminal',
           distanceToNextStopMeters: update.distanceToNextStopMeters ?? update.distanceMetersAssignedStop ?? prev.distanceToNextStopMeters,
           etaMinutesUpcomingStop: update.etaMinutesUpcomingStop ?? prev.etaMinutesUpcomingStop,
           boardedCount: update.boardedCount ?? prev.boardedCount,
@@ -353,14 +356,16 @@ export const StudentView: React.FC<StudentViewProps> = () => {
             </div>
           </div>
 
-          {/* Audio & Geofence Simulator Test Button */}
-          <button
-            onClick={triggerTestGeofence}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/15 text-xs font-bold text-slate-200 transition-all shadow-md active:scale-98"
-          >
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>Test 1km Geofence Alert Sound</span>
-          </button>
+          {/* Audio & Geofence Simulator Test Button — DEV only */}
+          {DEV_MODE && (
+            <button
+              onClick={triggerTestGeofence}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/15 text-xs font-bold text-slate-200 transition-all shadow-md active:scale-98"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>Test 1km Geofence Alert Sound</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -521,14 +526,16 @@ export const StudentView: React.FC<StudentViewProps> = () => {
               </div>
             </div>
 
-            {/* Geofence Test */}
-            <button
-              onClick={triggerTestGeofence}
-              className="w-full py-2 rounded-xl bg-white/10 border border-white/10 text-xs font-bold text-slate-200 flex items-center justify-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Test 1km Geofence Alert Sound</span>
-            </button>
+            {/* Geofence Test — DEV only */}
+            {DEV_MODE && (
+              <button
+                onClick={triggerTestGeofence}
+                className="w-full py-2 rounded-xl bg-white/10 border border-white/10 text-xs font-bold text-slate-200 flex items-center justify-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Test 1km Geofence Alert Sound</span>
+              </button>
+            )}
           </div>
         )}
       </div>

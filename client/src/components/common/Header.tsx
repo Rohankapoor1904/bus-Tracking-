@@ -18,13 +18,13 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLogin,
   isSocketConnected,
 }) => {
-  const canSwitchRoles = !currentUser || currentUser.role === 'ADMIN';
+  const canSwitchRoles = true;
   const isStudent = activeRoleView === 'STUDENT';
   const isDriver = activeRoleView === 'DRIVER';
   const isAdmin = activeRoleView === 'ADMIN';
 
   return (
-    <header className="w-full bg-slate-950/90 backdrop-blur-2xl border-b border-white/10 px-3 md:px-6 pt-[max(0.65rem,env(safe-area-inset-top))] pb-2.5 md:py-3.5 flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_25px_rgba(0,0,0,0.5)]">
+    <header className="w-full bg-slate-950/92 backdrop-blur-2xl border-b border-white/10 px-3 md:px-6 py-2.5 md:py-3.5 flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
       {/* 1. Left Institutional Logo & Identity */}
       <div className="flex items-center gap-2.5 md:gap-3.5">
         <div className="relative flex items-center">
@@ -135,11 +135,13 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <button
               onClick={onOpenLogin}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-white/10 hover:border-white/20 text-xs font-bold transition-all shadow-md active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-white/10 hover:border-white/20 text-xs font-bold transition-all shadow-md active:scale-95"
               title="Switch Persona / Login"
             >
               <UserCheck className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Persona</span>
+              <span className="text-[11px] font-bold text-slate-300">
+                {currentUser.role === 'STUDENT' ? 'Student' : currentUser.role === 'DRIVER' ? 'Driver' : 'Admin'} ▾
+              </span>
             </button>
           </div>
         ) : (

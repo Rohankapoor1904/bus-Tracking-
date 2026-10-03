@@ -11,7 +11,98 @@ import {
   ShieldCheck,
   RefreshCw,
   Check,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
+
+// Mobile collapsible bottom sheet for fleet list in Radar view
+interface MobileFleetSheetProps {
+  liveBuses: LiveBusState[];
+  selectedBus: LiveBusState | null;
+  routes: Route[];
+  telemetryHealth: (bus: LiveBusState) => 'LIVE' | 'STALE' | 'PARKED';
+  onSelectBus: (bus: LiveBusState) => void;
+}
+
+const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
+  liveBuses,
+  selectedBus,
+  routes: _routes,
+  telemetryHealth,
+  onSelectBus,
+}) => {
+  const [expanded, setExpanded] = React.useState(false);
+
+  return (
+    <div
+      className={`md:hidden absolute bottom-0 left-0 right-0 z-30 bg-slate-950/95 backdrop-blur-2xl border-t border-white/10 shadow-[0_-12px_40px_rgba(0,0,0,0.6)] rounded-t-3xl transition-all duration-300 ease-out ${
+        expanded ? 'max-h-[70vh]' : 'max-h-[72px]'
+      } flex flex-col overflow-hidden`}
+    >
+      {/* Drag handle + header */}
+      <div
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center justify-between px-4 py-3 cursor-pointer select-none flex-shrink-0"
+      >
+        <div className="w-10 h-1 bg-slate-600 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-2" />
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-xs font-black text-white uppercase tracking-wider">Active Fleet Units</span>
+          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
+            {liveBuses.filter((b) => telemetryHealth(b) === 'LIVE').length} LIVE
+          </span>
+        </div>
+        {expanded ? (
+          <ChevronDown className="w-4 h-4 text-slate-400" />
+        ) : (
+          <ChevronUp className="w-4 h-4 text-slate-400" />
+        )}
+      </div>
+
+      {/* Fleet cards */}
+      <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-2">
+        {liveBuses.map((b) => {
+          const isSelected = selectedBus?.busId === b.busId;
+          const health = telemetryHealth(b);
+          const loadPct = b.capacity > 0 ? Math.round((b.boardedCount / b.capacity) * 100) : 0;
+          return (
+            <div
+              key={b.busId}
+              onClick={() => onSelectBus(b)}
+              className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center gap-3 ${
+                isSelected
+                  ? 'bg-red-950/40 border-red-600'
+                  : 'bg-slate-800/70 border-slate-700'
+              }`}
+            >
+              <span
+                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                  health === 'LIVE' ? 'bg-emerald-400 animate-pulse' : health === 'STALE' ? 'bg-amber-400' : 'bg-slate-500'
+                }`}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-white text-sm">{b.busNumber}</span>
+                  <span className="text-[10px] font-mono font-bold text-amber-400">{b.speedKmh.toFixed(0)} km/h</span>
+                </div>
+                <div className="w-full h-1 bg-slate-700 rounded-full mt-1">
+                  <div
+                    className={`h-full rounded-full ${
+                      loadPct > 90 ? 'bg-red-500' : loadPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, loadPct)}%` }}
+                  />
+                </div>
+              </div>
+              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase ${
+                health === 'LIVE' ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}>{health}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 export const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'RADAR' | 'MANIFEST' | 'ALARMS' | 'FLEET'>('RADAR');
@@ -22,6 +113,10 @@ export const AdminDashboard: React.FC = () => {
   const [manifestBreakdown, setManifestBreakdown] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [selectedBus, setSelectedBus] = useState<LiveBusState | null>(null);
+  // Collapsible bottom sheet state for fleet list on desktop
+  const [isFleetSheetExpanded, setIsFleetSheetExpanded] = useState<boolean>(true);
+  // Ref to propagate map flyTo from fleet card clicks
+  const mapFlyToRef = React.useRef<((bus: LiveBusState) => void) | null>(null);
 
   const loadData = async () => {
     try {
@@ -237,92 +332,137 @@ export const AdminDashboard: React.FC = () => {
       <div className="flex-1 overflow-hidden relative">
         {/* TAB 1: 3D FLEET RADAR */}
         {activeTab === 'RADAR' && (
-          <div className="w-full h-full flex flex-col md:flex-row">
-            {/* 3D Canvas */}
-            <div className="flex-1 h-full relative">
+          <div className="w-full h-full flex flex-col md:flex-row relative">
+            {/* 3D Canvas — fully interactive (no pointer-events restriction) */}
+            <div className="flex-1 h-full relative min-h-0">
               <MapLibre3DView
                 activeRoute={selectedRoute}
                 activeBus={selectedBus}
                 allBuses={liveBuses}
-                onSelectBus={(b) => setSelectedBus(b)}
+                onSelectBus={(b) => {
+                  setSelectedBus(b);
+                  // Expose flyTo callback so bus card clicks can trigger camera
+                  if (mapFlyToRef.current) mapFlyToRef.current(b);
+                }}
               />
             </div>
 
-            {/* Right Fleet Selector List */}
-            <div className="w-full md:w-80 h-56 md:h-full bg-slate-900/95 border-l border-slate-800 p-4 overflow-y-auto space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">
-                  Active Fleet Units ({liveBuses.length})
-                </h4>
-                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
-                  {liveBuses.filter((b) => telemetryHealth(b) === 'LIVE').length} LIVE
-                </span>
-              </div>
+            {/* Desktop: Collapsible Right Fleet Sheet */}
+            <div
+              className={`hidden md:flex flex-col bg-slate-900/95 border-l border-slate-800 transition-all duration-300 ease-out overflow-hidden ${
+                isFleetSheetExpanded ? 'w-80' : 'w-12'
+              }`}
+            >
+              {/* Toggle Tab */}
+              <button
+                onClick={() => setIsFleetSheetExpanded(!isFleetSheetExpanded)}
+                className="flex items-center justify-center h-12 bg-slate-800 hover:bg-slate-700 border-b border-slate-700 text-slate-300 hover:text-white transition-colors flex-shrink-0"
+                title={isFleetSheetExpanded ? 'Collapse Fleet List' : 'Expand Fleet List'}
+              >
+                {isFleetSheetExpanded ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                )}
+              </button>
 
-              <div className="space-y-2">
-                {liveBuses.map((b) => {
-                  const isSelected = selectedBus?.busId === b.busId;
-                  const health = telemetryHealth(b);
-                  const loadPct = b.capacity > 0 ? Math.round((b.boardedCount / b.capacity) * 100) : 0;
-                  const overspeed = b.speedKmh > 75;
-                  const chip =
-                    health === 'LIVE'
-                      ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                      : health === 'STALE'
-                      ? 'bg-amber-950 text-amber-400 border-amber-800'
-                      : 'bg-slate-800 text-slate-400 border-slate-700';
-                  return (
-                    <div
-                      key={b.busId}
-                      onClick={() => {
-                        setSelectedBus(b);
-                        const r = routes.find((rt) => rt.id === b.routeId);
-                        if (r) setSelectedRoute(r);
-                      }}
-                      className={`p-3 rounded-2xl border cursor-pointer transition-all hover:scale-[1.01] ${
-                        isSelected
-                          ? 'bg-red-950/40 border-red-600 shadow-lg shadow-red-950/30'
-                          : 'bg-slate-800/50 border-slate-700 hover:border-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${health === 'LIVE' ? 'bg-emerald-400 animate-pulse' : health === 'STALE' ? 'bg-amber-400' : 'bg-slate-500'}`} />
-                          <span className="font-extrabold text-white text-sm">{b.busNumber}</span>
-                          <span className={`text-[9px] font-black px-1.5 py-px rounded border uppercase ${chip}`}>{health}</span>
-                        </div>
-                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${overspeed ? 'bg-red-600 text-white' : 'bg-black/40 text-amber-400'}`}>
-                          {b.speedKmh.toFixed(0)} km/h
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-300 truncate">{b.routeName || 'Unassigned corridor'}</p>
+              {isFleetSheetExpanded && (
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">
+                      Active Fleet Units ({liveBuses.length})
+                    </h4>
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
+                      {liveBuses.filter((b) => telemetryHealth(b) === 'LIVE').length} LIVE
+                    </span>
+                  </div>
 
-                      {/* Capacity bar */}
-                      <div className="mt-2">
-                        <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                          <span>Capacity</span>
-                          <span className="text-slate-200 font-bold">{b.boardedCount} / {b.capacity} · {loadPct}%</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${loadPct > 90 ? 'bg-red-500' : loadPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${Math.min(100, loadPct)}%` }}
-                          />
-                        </div>
-                      </div>
+                  <div className="space-y-2">
+                    {liveBuses.map((b) => {
+                      const isSelected = selectedBus?.busId === b.busId;
+                      const health = telemetryHealth(b);
+                      const loadPct = b.capacity > 0 ? Math.round((b.boardedCount / b.capacity) * 100) : 0;
+                      const overspeed = b.speedKmh > 75;
+                      const chip =
+                        health === 'LIVE'
+                          ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                          : health === 'STALE'
+                          ? 'bg-amber-950 text-amber-400 border-amber-800'
+                          : 'bg-slate-800 text-slate-400 border-slate-700';
+                      return (
+                        <div
+                          key={b.busId}
+                          onClick={() => {
+                            setSelectedBus(b);
+                            const r = routes.find((rt) => rt.id === b.routeId);
+                            if (r) setSelectedRoute(r);
+                            // Fly the radar map camera to this bus
+                            if (mapFlyToRef.current) mapFlyToRef.current(b);
+                          }}
+                          className={`p-3 rounded-2xl border cursor-pointer transition-all hover:scale-[1.01] ${
+                            isSelected
+                              ? 'bg-red-950/40 border-red-600 shadow-lg shadow-red-950/30'
+                              : 'bg-slate-800/50 border-slate-700 hover:border-slate-600'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full ${health === 'LIVE' ? 'bg-emerald-400 animate-pulse' : health === 'STALE' ? 'bg-amber-400' : 'bg-slate-500'}`} />
+                              <span className="font-extrabold text-white text-sm">{b.busNumber}</span>
+                              <span className={`text-[9px] font-black px-1.5 py-px rounded border uppercase ${chip}`}>{health}</span>
+                            </div>
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${overspeed ? 'bg-red-600 text-white' : 'bg-black/40 text-amber-400'}`}>
+                              {b.speedKmh.toFixed(0)} km/h
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 truncate">{b.routeName || 'Unassigned corridor'}</p>
 
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 pt-2 border-t border-slate-700/50">
-                        <span>Driver: <strong className="text-slate-200">{b.driverName}</strong></span>
-                        <span className="flex items-center gap-1">
-                          <Activity className={`w-3 h-3 ${health === 'LIVE' ? 'text-emerald-400' : 'text-slate-500'}`} />
-                          {new Date(b.lastPing).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                          {/* Capacity bar */}
+                          <div className="mt-2">
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                              <span>Capacity</span>
+                              <span className="text-slate-200 font-bold">{b.boardedCount} / {b.capacity} · {loadPct}%</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${loadPct > 90 ? 'bg-red-500' : loadPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                style={{ width: `${Math.min(100, loadPct)}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 pt-2 border-t border-slate-700/50">
+                            <span>Driver: <strong className="text-slate-200">{b.driverName}</strong></span>
+                            <span className="flex items-center gap-1">
+                              <Activity className={`w-3 h-3 ${health === 'LIVE' ? 'text-emerald-400' : 'text-slate-500'}`} />
+                              {new Date(b.lastPing).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Mobile: Collapsible Bottom Sheet Fleet List */}
+            <MobileFleetSheet
+              liveBuses={liveBuses}
+              selectedBus={selectedBus}
+              routes={routes}
+              telemetryHealth={telemetryHealth}
+              onSelectBus={(b) => {
+                setSelectedBus(b);
+                const r = routes.find((rt) => rt.id === b.routeId);
+                if (r) setSelectedRoute(r);
+                if (mapFlyToRef.current) mapFlyToRef.current(b);
+              }}
+            />
           </div>
         )}
 

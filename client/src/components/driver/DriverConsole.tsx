@@ -3,7 +3,8 @@ import { api } from '../../services/api.js';
 import { socketService } from '../../services/websocket.js';
 import { offlineQueue } from '../../services/offlineQueue.js';
 import { audioAlert } from '../../services/audioAlert.js';
-import { TripManifestResponse, Route } from '../../types/index.js';
+import { TripManifestResponse, Route, LiveBusState } from '../../types/index.js';
+import { MapLibre3DView } from '../3d/MapLibre3DView.js';
 import {
   Play,
   Square,
@@ -18,6 +19,7 @@ import {
   Phone,
   ArrowRight,
   Clock,
+  Map as MapIcon,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -43,9 +45,9 @@ export const DriverConsole: React.FC = () => {
   const [isWakeLocked, setIsWakeLocked] = useState<boolean>(false);
   const [pendingQueueCount, setPendingQueueCount] = useState<number>(0);
   const [sosActive, setSosActive] = useState<boolean>(false);
-  const [mobileTab, setMobileTab] = useState<'COCKPIT' | 'ROSTER'>('COCKPIT');
+  const [mobileTab, setMobileTab] = useState<'COCKPIT' | 'MAP' | 'ROSTER'>('COCKPIT');
   const [gpsStatus, setGpsStatus] = useState<'ACQUIRING' | 'LOCKED' | 'DENIED'>('ACQUIRING');
-  const [telemetryMode, setTelemetryMode] = useState<'SIMULATED_ROUTE' | 'DEVICE_GPS'>('SIMULATED_ROUTE');
+  const [telemetryMode, setTelemetryMode] = useState<'SIMULATED_ROUTE' | 'DEVICE_GPS'>('DEVICE_GPS');
   const [detectedDelhi, setDetectedDelhi] = useState<boolean>(false);
 
   // Live GPS telemetry — starts PARKED (0 motion) until real GPS fix arrives.
@@ -102,7 +104,17 @@ export const DriverConsole: React.FC = () => {
   // - SIMULATED_ROUTE: Drives along the MMU route waypoints (smooth 45-55 km/h) for testing from PC/Delhi
   // - DEVICE_GPS: Live hardware navigator.geolocation.watchPosition
   useEffect(() => {
-    if (!isBroadcasting || !activeTrip) return;
+    if (!isBroadcasting || !activeTrip) {
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
+      if (watchIdRef.current !== null) {
+        navigator.geolocation?.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      return;
+    }
 
     if (telemetryMode === 'SIMULATED_ROUTE') {
       const activeRoute = routes.find((r) => r.id === (activeTrip?.routeId || selectedRouteId)) || routes[0];
@@ -245,13 +257,22 @@ export const DriverConsole: React.FC = () => {
   const handleEndShift = async () => {
     if (!confirm('Are you sure you want to end this transit shift? Bus will return to parked status.')) return;
     try {
-      if (activeTrip) {
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
+      if (watchIdRef.current !== null) {
+        navigator.geolocation?.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (activeTrip?.id) {
         await api.endTrip(activeTrip.id);
       }
       setIsBroadcasting(false);
       setActiveTrip(null);
       setManifest(null);
       setCurrentStopIndex(0);
+      setMobileTab('COCKPIT');
       setGpsStatus('ACQUIRING');
       // Hold the real last-known coordinates, zero motion (parked contract)
       setTelemetry((t) => ({ ...t, speedKmh: 0 }));
@@ -322,6 +343,37 @@ export const DriverConsole: React.FC = () => {
 
   const currentStop = manifest?.stopsManifest[currentStopIndex];
 
+  // Build a LiveBusState snapshot from current telemetry for the navigation map
+  const driverLiveBus: LiveBusState | null = activeTrip
+    ? {
+        busId: activeTrip.busId || 'bus-01',
+        busNumber: 'BUS-01',
+        registrationNumber: 'HR-54-A-1993',
+        model: 'Tata Marcopolo Deluxe AC',
+        status: isBroadcasting ? 'EN_ROUTE' : 'IDLE',
+        capacity: 42,
+        boardedCount: manifest?.totalBoarded || 0,
+        driverName: 'Rajesh Kumar Sharma',
+        driverPhone: '',
+        routeId: activeTrip.routeId || selectedRouteId,
+        routeName: manifest?.route.name || 'Ambala Express',
+        latitude: telemetry.latitude,
+        longitude: telemetry.longitude,
+        speedKmh: telemetry.speedKmh,
+        bearing: telemetry.bearing,
+        altitudeM: 268,
+        accuracyM: telemetry.accuracy,
+        lastPing: new Date().toISOString(),
+        upcomingStopName: manifest?.stopsManifest[currentStopIndex]?.stopName || 'Next Stop',
+        distanceToNextStopMeters: 0,
+        etaMinutesUpcomingStop: 0,
+      }
+    : null;
+
+  const activeDriverRoute = activeTrip
+    ? routes.find((r) => r.id === (activeTrip.routeId || selectedRouteId)) || null
+    : null;
+
   return (
     <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col md:flex-row overflow-hidden select-none">
       {/* Mobile Driver Segmented Tab Navigation (< md) */}
@@ -335,8 +387,22 @@ export const DriverConsole: React.FC = () => {
           }`}
         >
           <Zap className="w-3.5 h-3.5" />
-          <span>Cockpit & Speed</span>
+          <span>Cockpit</span>
         </button>
+
+        {activeTrip && (
+          <button
+            onClick={() => setMobileTab('MAP')}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+              mobileTab === 'MAP'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/40'
+                : 'text-slate-400 bg-slate-800/80 hover:text-white'
+            }`}
+          >
+            <MapIcon className="w-3.5 h-3.5" />
+            <span>Nav Map</span>
+          </button>
+        )}
 
         <button
           onClick={() => setMobileTab('ROSTER')}
@@ -347,7 +413,7 @@ export const DriverConsole: React.FC = () => {
           }`}
         >
           <Users className="w-3.5 h-3.5" />
-          <span>Stop Roster ({manifest?.totalBoarded || 0} Boarded)</span>
+          <span>Roster ({manifest?.totalBoarded || 0})</span>
         </button>
       </div>
 
@@ -567,8 +633,71 @@ export const DriverConsole: React.FC = () => {
         </div>
       </div>
 
+      {/* Mobile Navigation Map Tab (visible only during active trip) */}
+      {mobileTab === 'MAP' && activeTrip && (
+        <div className="md:hidden flex-1 relative">
+          <MapLibre3DView
+            activeRoute={activeDriverRoute}
+            activeBus={driverLiveBus}
+            isCockpitMode={true}
+          />
+          {/* Overlay: next stop info */}
+          <div className="absolute bottom-4 left-3 right-3 z-20">
+            <div className="bg-slate-950/90 backdrop-blur-xl border border-white/10 rounded-2xl p-3 flex items-center justify-between shadow-2xl">
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Next Stop</p>
+                <p className="text-sm font-black text-white truncate">
+                  {manifest?.stopsManifest[currentStopIndex]?.stopName || 'En Route…'}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Speed</p>
+                <p className="text-xl font-black text-amber-400">{telemetry.speedKmh.toFixed(0)} <span className="text-xs font-bold text-slate-400">km/h</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Desktop: Navigation Map Panel (right of cockpit when trip is active) */}
+      {activeTrip && (
+        <div className="hidden md:flex flex-1 relative">
+          <MapLibre3DView
+            activeRoute={activeDriverRoute}
+            activeBus={driverLiveBus}
+            isCockpitMode={true}
+          />
+          {/* Next stop overlay on desktop map */}
+          <div className="absolute bottom-6 left-4 right-4 z-20 pointer-events-none">
+            <div className="bg-slate-950/85 backdrop-blur-2xl border border-white/10 rounded-2xl p-3.5 flex items-center justify-between shadow-2xl">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 flex-shrink-0">
+                  <ArrowRight className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400 uppercase font-bold">Approaching Stop</p>
+                  <p className="text-sm font-black text-white">
+                    {manifest?.stopsManifest[currentStopIndex]?.stopName || 'En Route…'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-center">
+                  <p className="text-[9px] text-slate-400 font-bold uppercase">Speed</p>
+                  <p className="text-lg font-black text-amber-400">{telemetry.speedKmh.toFixed(0)}<span className="text-xs font-bold text-slate-400 ml-0.5">km/h</span></p>
+                </div>
+                <div className="text-center border-l border-white/10 pl-4">
+                  <p className="text-[9px] text-slate-400 font-bold uppercase">Bearing</p>
+                  <p className="text-lg font-black text-red-400">{compassLabel(telemetry.bearing)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 2. Right Stop-Wise Student Manifest Boarding Roster */}
-      <div className={`flex-1 bg-slate-950 p-3.5 md:p-5 flex-col overflow-hidden ${mobileTab === 'ROSTER' ? 'flex' : 'hidden md:flex'}`}>
+      <div className={`flex-1 bg-slate-950 p-3.5 md:p-5 flex-col overflow-hidden ${mobileTab === 'ROSTER' ? 'flex' : 'hidden md:flex'} ${activeTrip ? 'md:max-w-[420px] md:flex-none' : ''}`}>
         {/* Stoppage Carousel Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div>
