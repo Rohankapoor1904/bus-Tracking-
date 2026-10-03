@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
-import { authenticate, requireRole } from '../middleware/auth.middleware.js';
+import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth.middleware.js';
+import { busStatusSchema } from '../validation/schemas.js';
 
 export const fleetRouter = Router();
 
@@ -79,19 +80,41 @@ fleetRouter.get('/:id', async (req: Request<{ id: string }>, res: Response): Pro
   }
 });
 
-fleetRouter.patch('/:id/status', authenticate, requireRole('ADMIN', 'DRIVER'), async (req: Request<{ id: string }>, res: Response): Promise<void> => {
-  try {
-    const { status, driverId } = req.body;
-    const bus = await db.updateBus(req.params.id, {
-      ...(status ? { status } : {}),
-      ...(driverId ? { assignedDriverId: driverId } : {}),
-    });
-    if (!bus) {
-      res.status(404).json({ success: false, error: 'Bus not found' });
-      return;
+fleetRouter.patch(
+  '/:id/status',
+  authenticate,
+  requireRole('ADMIN', 'DRIVER'),
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const parsed = busStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ success: false, error: 'Invalid status payload' });
+        return;
+      }
+
+      // Drivers may only change the status of their own assigned vehicle and
+      // may not reassign drivers.
+      if (req.user?.role === 'DRIVER') {
+        const user = await db.getUserById(req.user.userId);
+        if (!user?.assignedBusId || user.assignedBusId !== String(req.params.id)) {
+          res.status(403).json({ success: false, error: 'Not authorized for this vehicle' });
+          return;
+        }
+      }
+
+      const bus = await db.updateBus(String(req.params.id), {
+        ...(parsed.data.status ? { status: parsed.data.status } : {}),
+        ...(req.user?.role === 'ADMIN' && parsed.data.driverId
+          ? { assignedDriverId: parsed.data.driverId }
+          : {}),
+      });
+      if (!bus) {
+        res.status(404).json({ success: false, error: 'Bus not found' });
+        return;
+      }
+      res.status(200).json({ success: true, data: bus });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
-    res.status(200).json({ success: true, data: bus });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
   }
-});
+);

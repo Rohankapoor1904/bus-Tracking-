@@ -24,20 +24,27 @@ export const App: React.FC = () => {
           const user = await api.getMe();
           setCurrentUser(user);
           setActiveRoleView(user.role as UserRole);
-        } else {
-          // Auto-login with default Student persona for instant interactive evaluation
+          return;
+        }
+        // Development-only convenience: sign in a demo persona automatically.
+        // Production builds require an explicit login.
+        if (import.meta.env.DEV) {
           const loginRes = await api.login('student.aarav@mmumullana.org', 'MMU@Secure2026', 'STUDENT');
           setCurrentUser(loginRes.user);
           setActiveRoleView('STUDENT');
+          return;
         }
+        setIsAuthOpen(true);
       } catch (e) {
         console.warn('Auto-session initialization warning:', e);
+        api.setToken(null);
+        setIsAuthOpen(true);
       }
     };
 
     initSession();
 
-    // Connect WebSocket
+    // Connect WebSocket (authenticated when a token is present)
     socketService.connect(api.getToken() || undefined);
     const unsubscribeStatus = socketService.on('connection_status', (status: any) => {
       setIsSocketConnected(status.connected);

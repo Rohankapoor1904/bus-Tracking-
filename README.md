@@ -30,28 +30,58 @@ Production-grade real-time 3D geospatial bus tracking, high-frequency telemetry 
 
 ## 🚀 Quick Start Guide
 
-### 1. Install Dependencies
+### 1. Start PostgreSQL (PostGIS) & Redis
+```bash
+# From repo root — starts PostGIS + Redis with persistent volumes:
+docker compose up -d
+```
+
+### 2. Configure the Backend Environment
+```bash
+cp server/.env.example server/.env
+# then edit server/.env — set DATABASE_URL, REDIS_URL and a strong JWT_SECRET
+```
+Generate a production secret with:
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+### 3. Install Dependencies
 ```bash
 # From workspace root:
 npm run install:all
 ```
 
-### 2. Start Backend & Frontend Simultaneously
+### 4. Start Backend & Frontend Simultaneously
 ```bash
 # Starts both Backend (Port 4000) and 3D Frontend (Port 5173):
 npm run dev
 ```
+On first boot the server applies the PostGIS schema (`server/src/db/schema.sql`)
+and seeds the grounded MMU reference data (routes, stops, fleet, demo personas).
 
-### 3. Open in Browser
+### 5. Open in Browser
 - **Frontend App:** [http://localhost:5173/](http://localhost:5173/)
 - **Backend API:** [http://localhost:4000/api/v1](http://localhost:4000/api/v1)
 - **Health Check:** [http://localhost:4000/health](http://localhost:4000/health)
 - **WebSocket Gateway:** `ws://localhost:4000/ws`
 
-### 4. Run Automated Test Suite
+### 6. Run Automated Test Suite
 ```bash
 npm run test
 ```
+
+---
+
+## 🔐 Production Hardening
+
+- **Authentication is enforced on every mutating path.** REST endpoints use JWT + RBAC, and the WebSocket gateway rejects `TELEMETRY_PING`, `EMERGENCY_SOS` and `ATTENDANCE_UPDATE` from unauthenticated or unauthorized clients.
+- **Telemetry is authenticated, role-scoped and validated.** Drivers may only broadcast for their assigned vehicle; coordinates are bounded to the MMU corridor and speed is capped before alerts/broadcasts.
+- **Secrets are environment-driven.** `JWT_SECRET` has no hardcoded fallback in production, and `CORS_ORIGIN` must be an explicit allowlist.
+- **Demo personas are disabled by default in production** (`ENABLE_DEMO_ACCOUNTS=false`), so the shared demo password and `/auth/demo-accounts` endpoint are not exposed.
+- **Transport protections:** `helmet`, request size limits, and login rate limiting.
+- **Data persistence:** all fleet state lives in PostgreSQL + PostGIS, so it survives restarts and supports horizontal scaling; Redis (optional) provides a latest-position cache and cross-instance WebSocket fan-out.
+
 
 ---
 

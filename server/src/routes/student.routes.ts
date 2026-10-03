@@ -16,9 +16,13 @@ studentRouter.get('/allocation', authenticate, async (req: AuthenticatedRequest,
 
     const allocation = await db.getAllocationByStudentId(studentId);
     if (!allocation) {
-      // Fallback for demo users: assign to route-amb-01 if unallocated
-      const defaultAllocation = (await db.getAllocationsByRouteId('route-amb-01'))[0];
-      res.status(200).json({ success: true, data: defaultAllocation });
+      if (config.enableDemoAccounts) {
+        // Development convenience: show an example allocation for unallocated demos.
+        const defaultAllocation = (await db.getAllocationsByRouteId('route-amb-01'))[0];
+        res.status(200).json({ success: true, data: defaultAllocation });
+        return;
+      }
+      res.status(404).json({ success: false, error: 'No active bus allocation found for this student' });
       return;
     }
 

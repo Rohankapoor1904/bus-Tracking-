@@ -1,0 +1,41 @@
+# ============================================================================
+# MMU FleetRadar 3D — local/production dependencies
+#   docker compose up -d
+# ============================================================================
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: mmu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mmu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mmu_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-mmu_fleet}
+    ports:
+      - '5432:5432'
+    volumes:
+      - mmu_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-mmu} -d ${POSTGRES_DB:-mmu_fleet}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mmu-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - mmu_redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mmu_pgdata:
+  mmu_redisdata:

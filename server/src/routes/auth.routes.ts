@@ -2,18 +2,20 @@ import { Router, Request, Response } from 'express';
 import { AuthService } from '../services/auth.service.js';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { db } from '../db/database.js';
+import { config } from '../config/index.js';
+import { loginSchema } from '../validation/schemas.js';
 
 export const authRouter = Router();
 
 authRouter.post('/login', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password, role } = req.body;
-    if (!email || !password) {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
       res.status(400).json({ success: false, error: 'Email and password are required' });
       return;
     }
 
-    const result = await AuthService.login(email, password, role);
+    const result = await AuthService.login(parsed.data.email, parsed.data.password, parsed.data.role);
     res.status(200).json({ success: true, data: result });
   } catch (err: any) {
     res.status(401).json({ success: false, error: err.message || 'Login failed' });
@@ -39,10 +41,17 @@ authRouter.get('/me', authenticate, async (req: AuthenticatedRequest, res: Respo
   }
 });
 
+/**
+ * Development-only persona switcher feed. Disabled in production unless
+ * explicitly enabled, because it exposes the shared demo password.
+ */
 authRouter.get('/demo-accounts', async (_req: Request, res: Response): Promise<void> => {
-  // Returns demo accounts list for one-click instant testing
+  if (!config.enableDemoAccounts) {
+    res.status(404).json({ success: false, error: 'Not available' });
+    return;
+  }
   const users = await db.getAllUsers();
-  const demoList = users.map(u => ({
+  const demoList = users.map((u) => ({
     id: u.id,
     email: u.email,
     fullName: u.fullName,
@@ -55,7 +64,7 @@ authRouter.get('/demo-accounts', async (_req: Request, res: Response): Promise<v
   res.status(200).json({
     success: true,
     data: {
-      defaultPassword: 'MMU@Secure2026',
+      defaultPassword: config.demoPassword,
       accounts: demoList,
     },
   });

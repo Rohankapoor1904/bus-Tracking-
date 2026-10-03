@@ -1,14 +1,9 @@
 import { db } from '../db/database.js';
-import {
-  TelemetryPoint,
-  WSOutboundMessage,
-  RouteStop,
-} from '../types/index.js';
+import { redis } from '../db/redis.js';
+import { TelemetryPoint, WSOutboundMessage, RouteStop } from '../types/index.js';
 import {
   calculateDistanceMeters,
-  calculateBearing,
   calculateETA,
-  isWithinGeofence,
 } from '../db/spatial-engine.js';
 import { config } from '../config/index.js';
 
@@ -24,7 +19,7 @@ export class TelemetryService {
   }
 
   public static async processTelemetry(point: TelemetryPoint) {
-    // 1. Persist telemetry point
+    // 1. Persist telemetry point in PostgreSQL
     await db.saveTelemetryPoint(point);
 
     // 2. Fetch active trip and route
@@ -37,7 +32,6 @@ export class TelemetryService {
     let etaMinutes = 0;
 
     if (route && route.stops.length > 0) {
-      // Find nearest upcoming stop along the sequence
       for (const stop of route.stops) {
         const dist = calculateDistanceMeters(
           point.latitude,
@@ -73,7 +67,6 @@ export class TelemetryService {
               },
             };
 
-            // Broadcast to students on this route
             if (this.broadcast) {
               this.broadcast(`route:${route.id}`, geofenceAlert);
               this.broadcast('admin:radar', geofenceAlert);
@@ -102,7 +95,7 @@ export class TelemetryService {
       data: {
         busId: point.busId,
         busNumber: bus?.busNumber || point.busNumber || 'BUS',
-        routeId: point.routeId || route?.id || 'route-amb-01',
+        routeId: point.routeId || route?.id || null,
         routeName: route?.name || 'MMU Transit Line',
         latitude: point.latitude,
         longitude: point.longitude,
@@ -120,7 +113,8 @@ export class TelemetryService {
       },
     };
 
-    // 5. Broadcast to route channel and Admin Fleet Radar
+    // 5. Cache latest position + broadcast to route channel and Admin Fleet Radar
+    await redis.setLatestPosition(point.busId, positionUpdate.data);
     if (this.broadcast) {
       if (point.routeId) {
         this.broadcast(`route:${point.routeId}`, positionUpdate);
@@ -131,7 +125,13 @@ export class TelemetryService {
     return positionUpdate;
   }
 
-  public static async triggerEmergencySOS(busId: string, driverId: string, latitude: number, longitude: number, message: string) {
+  public static async triggerEmergencySOS(
+    busId: string,
+    driverId: string,
+    latitude: number,
+    longitude: number,
+    message: string
+  ) {
     const bus = await db.getBusById(busId);
     const trip = await db.getActiveTripByBusId(busId);
 
