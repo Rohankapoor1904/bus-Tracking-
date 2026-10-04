@@ -11,6 +11,8 @@ export interface User {
   department?: string;
   assignedBusId?: string;
   assignedRouteId?: string;
+  /** True when the session was opened with the shared global access login. */
+  isGlobalAccess?: boolean;
 }
 
 export interface RouteStop {
@@ -158,4 +160,33 @@ export interface FleetOverviewMetrics {
     message: string;
     createdAt: string;
   }[];
+}
+
+export interface StudentRosterItem {
+  id: string;
+  fullName: string;
+  rollNumber: string;
+  department: string;
+  phone: string;
+  email: string;
+  routeId: string;
+  routeName?: string;
+  stopId: string;
+  stopName?: string;
+  passNumber: string;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface DriverProfile {
+  id: string;
+  fullName: string;
+  phone: string;
+  licenseNumber: string;
+  assignedBusId?: string;
+  assignedBusNumber?: string;
+  assignedRouteId?: string;
+  assignedRouteName?: string;
+  status: 'ACTIVE' | 'ON_DUTY' | 'ON_LEAVE' | 'INACTIVE';
+  experienceYears?: number;
+  emergencyContact?: string;
 }

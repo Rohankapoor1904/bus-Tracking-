@@ -15,6 +15,7 @@
     "@capacitor/android": "^8.5.2",
     "@capacitor/cli": "^8.5.2",
     "@capacitor/core": "^8.5.2",
+    "@capacitor/geolocation": "^8.2.3",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.16.0",
     "maplibre-gl": "^4.7.1",

@@ -4,6 +4,7 @@ import { authenticate, AuthenticatedRequest } from '../middleware/auth.middlewar
 import { db } from '../db/database.js';
 import { config } from '../config/index.js';
 import { loginSchema } from '../validation/schemas.js';
+import { User } from '../types/index.js';
 
 export const authRouter = Router();
 
@@ -33,7 +34,10 @@ authRouter.get('/me', authenticate, async (req: AuthenticatedRequest, res: Respo
       res.status(404).json({ success: false, error: 'User record not found' });
       return;
     }
-    const sanitized = { ...user };
+    const sanitized: User & { isGlobalAccess?: boolean } = {
+      ...user,
+      isGlobalAccess: req.user.isGlobalAccess === true,
+    };
     delete sanitized.passwordHash;
     res.status(200).json({ success: true, data: sanitized });
   } catch (err: any) {

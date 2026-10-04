@@ -10,6 +10,28 @@ class RealTimeSocketService {
   private listeners: Map<string, Set<EventCallback>> = new Map();
   private pendingSubscriptions: Set<string> = new Set();
   private isConnected = false;
+  private currentToken?: string;
+  private currentRouteId?: string;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mmu_fleet_config_change', (e: any) => {
+        if (this.isConnected && e.detail) {
+          this.sendAction('FLEET_CONFIG_UPDATE', undefined, e.detail);
+        }
+      });
+
+      if (typeof BroadcastChannel !== 'undefined') {
+        const syncChannel = new BroadcastChannel('mmu_fleet_sync');
+        syncChannel.onmessage = (event) => {
+          if (event.data?.type) {
+            this.emit(event.data.type, event.data.payload);
+            this.emit('FLEET_CONFIG_UPDATE', event.data);
+          }
+        };
+      }
+    }
+  }
 
   private getWsUrl(): string {
     const envUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
@@ -22,8 +44,35 @@ class RealTimeSocketService {
   }
 
   public connect(token?: string, routeId?: string) {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+    const sameSession =
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) &&
+      this.currentToken === token &&
+      this.currentRouteId === routeId;
+    if (sameSession) {
       return;
+    }
+    // Token or route changed (e.g. unauthenticated socket opened before login,
+    // then driver/student signed in) — drop the stale socket so the new
+    // handshake carries the auth token + routeId. Otherwise telemetry is sent
+    // as an anonymous user and the server rejects it, and route feeds never arrive.
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onopen = null;
+        this.ws.onmessage = null;
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+      this.isConnected = false;
+    }
+    this.currentToken = token;
+    this.currentRouteId = routeId;
+    if (routeId) {
+      this.pendingSubscriptions.add(`route:${routeId}`);
     }
 
     let connectUrl = this.getWsUrl();
@@ -52,6 +101,20 @@ class RealTimeSocketService {
         const message = JSON.parse(event.data);
         if (message.event) {
           this.emit(message.event, message.data);
+          if (
+            message.event === 'FLEET_CONFIG_UPDATE' ||
+            message.event === 'TRIP_STARTED' ||
+            message.event === 'TRIP_ENDED' ||
+            message.event === 'TRIP_EVENT'
+          ) {
+            // Also notify any local components that listen to generic fleet updates
+            this.emit('FLEET_CONFIG_UPDATE', message.data);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('mmu_fleet_sync_received', { detail: message })
+              );
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to parse WS message:', err);
@@ -132,7 +195,15 @@ class RealTimeSocketService {
     this.sendAction('EMERGENCY_SOS', undefined, payload);
   }
 
-  private sendAction(action: string, channel?: string, payload?: any) {
+  public broadcastFleetConfig(payload: any) {
+    this.sendAction('FLEET_CONFIG_UPDATE', undefined, payload);
+  }
+
+  public broadcastTripEvent(payload: any) {
+    this.sendAction('TRIP_EVENT', undefined, payload);
+  }
+
+  public sendAction(action: string, channel?: string, payload?: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ action, channel, payload }));
     }

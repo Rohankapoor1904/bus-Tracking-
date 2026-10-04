@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../services/api.js';
 import { socketService } from '../../services/websocket.js';
 import { offlineQueue } from '../../services/offlineQueue.js';
+import { ensureLocationPermission, watchDeviceFix, getDeviceFix } from '../../services/location.js';
 import { audioAlert } from '../../services/audioAlert.js';
 import { TripManifestResponse, Route, LiveBusState } from '../../types/index.js';
 import { MapLibre3DView } from '../3d/MapLibre3DView.js';
@@ -38,7 +39,27 @@ const targetArrival = (stopSequence: number): string => {
   return arrival.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
+// Mounting both the mobile and desktop map panels (one hidden only via CSS)
+// would run two WebGL map instances at once — the single biggest source of
+// jank in the driver console. Choose one by viewport instead.
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(min-width: 768px)').matches
+      : true
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  return isDesktop;
+}
+
 export const DriverConsole: React.FC = () => {
+  const isDesktop = useIsDesktop();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [selectedRouteId, setSelectedRouteId] = useState<string>('route-amb-01');
   const [activeTrip, setActiveTrip] = useState<any>(null);
@@ -50,6 +71,8 @@ export const DriverConsole: React.FC = () => {
   const [sosActive, setSosActive] = useState<boolean>(false);
   const [mobileTab, setMobileTab] = useState<'COCKPIT' | 'MAP' | 'ROSTER'>('COCKPIT');
   const [gpsStatus, setGpsStatus] = useState<'ACQUIRING' | 'LOCKED' | 'DENIED'>('ACQUIRING');
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [socketError, setSocketError] = useState<string | null>(null);
   const [telemetryMode, setTelemetryMode] = useState<'SIMULATED_ROUTE' | 'DEVICE_GPS'>('DEVICE_GPS');
   const [detectedDelhi, setDetectedDelhi] = useState<boolean>(false);
   const [driverBusId, setDriverBusId] = useState<string>('bus-01');
@@ -80,15 +103,24 @@ export const DriverConsole: React.FC = () => {
 
         const routesData = await api.getRoutes();
         setRoutes(routesData);
-        if (me?.assignedRouteId && routesData.some((r) => r.id === me.assignedRouteId)) {
-          setSelectedRouteId(me.assignedRouteId);
-        }
+        const routeId = me?.assignedRouteId && routesData.some((r) => r.id === me.assignedRouteId)
+          ? me.assignedRouteId
+          : selectedRouteId;
+        setSelectedRouteId(routeId);
+        // (Re)connect the realtime channel with the fresh token + corridor so
+        // TELEMETRY_PING is authenticated. Without this the server rejects
+        // every packet as anonymous and the bus never appears live.
+        socketService.connect(api.getToken() || undefined, routeId);
         // Do NOT auto-load a fabricated trip. Manifest appears after Start Trip.
       } catch (err) {
         console.error('Failed to load driver routes:', err);
       }
     };
     init();
+
+    const unsubscribeConfig = socketService.on('FLEET_CONFIG_UPDATE', () => {
+      init();
+    });
 
     // Enable Screen Wake Lock
     if ('wakeLock' in navigator) {
@@ -104,6 +136,7 @@ export const DriverConsole: React.FC = () => {
     }
 
     return () => {
+      unsubscribeConfig();
       if (wakeLockRef.current) {
         wakeLockRef.current.release();
       }
@@ -123,39 +156,57 @@ export const DriverConsole: React.FC = () => {
 
   // Continuously acquire the device position from the moment the console opens
   // (not only during an active trip), so a driver's location is always tracked.
+  // Uses the shared location service (native plugin on device) so the APK gets
+  // real GPS even on insecure origins where browser geolocation is blocked.
   useEffect(() => {
-    if (!('geolocation' in navigator)) {
-      setGpsStatus('DENIED');
-      return;
-    }
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        lastFixRef.current = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          bearing: pos.coords.heading ?? 0,
-          accuracy: pos.coords.accuracy,
-        };
-        if (!isBroadcasting) {
-          setGpsStatus('LOCKED');
-          // Reflect the real stationary position on the console even before a
-          // shift starts, so it is never a fabricated campus default.
-          setTelemetry((t) => ({
-            ...t,
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            speedKmh: 0,
-            bearing: pos.coords.heading ?? t.bearing,
-            accuracy: pos.coords.accuracy,
-          }));
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      await ensureLocationPermission().catch(() => undefined);
+      if (cancelled) return;
+      stop = await watchDeviceFix(
+        (fix) => {
+          setGpsError(null);
+          lastFixRef.current = {
+            latitude: fix.latitude,
+            longitude: fix.longitude,
+            bearing: fix.heading ?? 0,
+            accuracy: fix.accuracy,
+          };
+          if (!isBroadcasting) {
+            setGpsStatus('LOCKED');
+            // Reflect the real stationary position on the console even before a
+            // shift starts, so it is never a fabricated campus default.
+            setTelemetry((t) => ({
+              ...t,
+              latitude: fix.latitude,
+              longitude: fix.longitude,
+              speedKmh: 0,
+              bearing: fix.heading ?? t.bearing,
+              accuracy: fix.accuracy,
+            }));
+          }
+        },
+        (err) => {
+          // PERMISSION_DENIED (code 1) = app ko location permission nahi mili —
+          // phone ki location ON hona kaafi nahi, App permissions me Allow karna hoga.
+          // TIMEOUT (code 3) = GPS cold-start; watch jaari rehta hai, DENIED mat dikhao.
+          if (err.code === 1) {
+            setGpsStatus('DENIED');
+            setGpsError(
+              'Location permission denied — phone Settings → Apps → MMU FleetRadar → Permissions → Location → Allow (While using the app), phir Retry dabayein.'
+            );
+          } else if (!isBroadcasting && err.code !== 3) {
+            setGpsStatus('DENIED');
+            setGpsError(`GPS error: ${err.message}`);
+          }
         }
-      },
-      () => {
-        if (!isBroadcasting) setGpsStatus('DENIED');
-      },
-      { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
-    );
-    return () => navigator.geolocation.clearWatch(id);
+      );
+    })();
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBroadcasting, telemetryMode]);
 
@@ -234,66 +285,73 @@ export const DriverConsole: React.FC = () => {
       };
     }
 
-    if (!('geolocation' in navigator)) {
-      setGpsStatus('DENIED');
-      return;
-    }
+    let stopLive: (() => void) | undefined;
+    let cancelledLive = false;
+    (async () => {
+      await ensureLocationPermission().catch(() => undefined);
+      if (cancelledLive) return;
+      stopLive = await watchDeviceFix(
+        (fix) => {
+          setGpsStatus('LOCKED');
+          setGpsError(null);
+          const lat = fix.latitude;
+          const lon = fix.longitude;
+          const spd = (fix.speedMps ?? 0) * 3.6;
+          const heading = fix.heading ?? telemetry.bearing;
 
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        setGpsStatus('LOCKED');
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        const spd = (pos.coords.speed ?? 0) * 3.6;
-        const heading = pos.coords.heading ?? telemetry.bearing;
+          if (lat < 29.5) {
+            setDetectedDelhi(true);
+          }
 
-        if (lat < 29.5) {
-          setDetectedDelhi(true);
-        }
-
-        setTelemetry({
-          latitude: lat,
-          longitude: lon,
-          speedKmh: Math.max(0, spd),
-          bearing: heading ?? 0,
-          accuracy: pos.coords.accuracy,
-        });
-
-        const packet = {
-          tripId: activeTrip.id,
-          busId: activeTrip.busId,
-          routeId: activeTrip.routeId,
-          latitude: lat,
-          longitude: lon,
-          speed: Math.max(0, spd),
-          bearing: heading ?? 0,
-          accuracy: pos.coords.accuracy,
-          timestamp: Date.now(),
-        };
-
-        if (socketService.isSocketOpen()) {
-          socketService.sendDriverTelemetry(packet);
-          lastPushRef.current = Date.now();
-          offlineQueue.flush((p) => socketService.sendDriverTelemetry(p)).then((count) => {
-            if (count > 0) setPendingQueueCount(0);
+          setTelemetry({
+            latitude: lat,
+            longitude: lon,
+            speedKmh: Math.max(0, spd),
+            bearing: heading ?? 0,
+            accuracy: fix.accuracy,
           });
-        } else {
-          offlineQueue.enqueue(packet);
-          setPendingQueueCount(offlineQueue.getPendingCount());
+
+          const packet = {
+            tripId: activeTrip.id,
+            busId: activeTrip.busId,
+            routeId: activeTrip.routeId,
+            latitude: lat,
+            longitude: lon,
+            speed: Math.max(0, spd),
+            bearing: heading ?? 0,
+            accuracy: fix.accuracy,
+            timestamp: Date.now(),
+          };
+
+          if (socketService.isSocketOpen()) {
+            socketService.sendDriverTelemetry(packet);
+            lastPushRef.current = Date.now();
+            offlineQueue.flush((p) => socketService.sendDriverTelemetry(p)).then((count) => {
+              if (count > 0) setPendingQueueCount(0);
+            });
+          } else {
+            offlineQueue.enqueue(packet);
+            setPendingQueueCount(offlineQueue.getPendingCount());
+          }
+        },
+        (err) => {
+          console.warn('Geolocation unavailable — holding parked position:', err.message);
+          if (err.code === 1) {
+            setGpsStatus('DENIED');
+            setGpsError(
+              'Location permission denied — phone Settings → Apps → MMU FleetRadar → Permissions → Location → Allow, phir Start Trip dobara karein.'
+            );
+          } else if (err.code !== 3) {
+            // Timeout while moving: keep last fix, stay ACQUIRING — do not flip to DENIED.
+            setGpsError(`GPS signal weak: ${err.message} — khuli jagah par Retry karein.`);
+          }
         }
-      },
-      (err) => {
-        console.warn('Geolocation unavailable — holding parked position:', err.message);
-        setGpsStatus('DENIED');
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-    );
+      );
+    })();
 
     return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
+      cancelledLive = true;
+      stopLive?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBroadcasting, activeTrip, telemetryMode, routes, selectedRouteId]);
@@ -343,15 +401,31 @@ export const DriverConsole: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBroadcasting, activeTrip]);
 
+  // Surface server rejections (auth / wrong bus / out-of-corridor) so the
+  // driver knows WHY the bus is not going live instead of a silent no-op.
+  useEffect(() => {
+    const off = socketService.on('ERROR', (data: any) => {
+      const msg = data?.message;
+      if (typeof msg === 'string' && msg.length > 0) setSocketError(msg);
+    });
+    return off;
+  }, []);
+
   // Handle Start Trip / Go Live — begins real GPS broadcast
   const handleStartShift = async () => {
     try {
+      setSocketError(null);
+      // Re-assert the authenticated channel right before going live (the token
+      // may have refreshed since the console opened).
+      socketService.connect(api.getToken() || undefined, selectedRouteId);
       const newTrip = await api.startTrip(driverBusId, selectedRouteId, 'CAMPUS_BOUND');
       const m = await api.getTripManifest(newTrip.id);
       setManifest(m);
       setActiveTrip(newTrip);
       setCurrentStopIndex(0);
       setIsBroadcasting(true);
+      socketService.broadcastTripEvent({ event: 'TRIP_STARTED', trip: newTrip, busId: driverBusId, routeId: selectedRouteId });
+      socketService.broadcastFleetConfig({ type: 'TRIP_STARTED', trip: newTrip, busId: driverBusId, routeId: selectedRouteId });
       confetti({ particleCount: 30, spread: 50 });
     } catch (err: any) {
       alert(`Could not start shift: ${err.message}`);
@@ -370,9 +444,12 @@ export const DriverConsole: React.FC = () => {
         navigator.geolocation?.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
-      if (activeTrip?.id) {
-        await api.endTrip(activeTrip.id);
+      const endingTripId = activeTrip?.id;
+      if (endingTripId) {
+        await api.endTrip(endingTripId);
       }
+      socketService.broadcastTripEvent({ event: 'TRIP_ENDED', tripId: endingTripId, busId: driverBusId });
+      socketService.broadcastFleetConfig({ type: 'TRIP_ENDED', tripId: endingTripId, busId: driverBusId });
       setIsBroadcasting(false);
       setActiveTrip(null);
       setManifest(null);
@@ -610,6 +687,44 @@ export const DriverConsole: React.FC = () => {
             </div>
           </div>
 
+          {/* GPS / socket diagnostics — tells the driver exactly what to fix */}
+          {(gpsStatus === 'DENIED' || gpsError) && (
+            <div className="p-3 bg-red-950/60 border border-red-800 rounded-xl text-xs text-red-200 space-y-2">
+              <div className="font-bold flex items-center gap-1.5">
+                <WifiOff className="w-4 h-4 text-red-400" />
+                <span>GPS unavailable — location detect nahi ho rahi</span>
+              </div>
+              {gpsError && <p className="leading-snug text-[11px]">{gpsError}</p>}
+              <button
+                onClick={async () => {
+                  setGpsStatus('ACQUIRING');
+                  setGpsError(null);
+                  await ensureLocationPermission().catch(() => undefined);
+                  try {
+                    const fix = await getDeviceFix(15000);
+                    lastFixRef.current = {
+                      latitude: fix.latitude,
+                      longitude: fix.longitude,
+                      bearing: fix.heading ?? 0,
+                      accuracy: fix.accuracy,
+                    };
+                    setGpsStatus('LOCKED');
+                  } catch (err: any) {
+                    setGpsError(`Retry failed: ${err?.message ?? err}`);
+                  }
+                }}
+                className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded"
+              >
+                Retry GPS
+              </button>
+            </div>
+          )}
+          {socketError && (
+            <div className="p-3 bg-amber-950/60 border border-amber-800 rounded-xl text-xs text-amber-200">
+              <span className="font-bold">Server: </span>{socketError}
+            </div>
+          )}
+
           {/* Offline Queue Indicator */}
           {pendingQueueCount > 0 && (
             <div className="p-3 bg-amber-950/60 border border-amber-800 rounded-xl flex items-center justify-between text-xs text-amber-300">
@@ -760,7 +875,7 @@ export const DriverConsole: React.FC = () => {
       </div>
 
       {/* Mobile Navigation Map Tab (visible only during active trip) */}
-      {mobileTab === 'MAP' && activeTrip && (
+      {!isDesktop && mobileTab === 'MAP' && activeTrip && (
         <div className="md:hidden flex-1 relative">
           <MapLibre3DView
             activeRoute={activeDriverRoute}
@@ -786,7 +901,7 @@ export const DriverConsole: React.FC = () => {
       )}
 
       {/* Desktop: Navigation Map Panel (right of cockpit when trip is active) */}
-      {activeTrip && (
+      {isDesktop && activeTrip && (
         <div className="hidden md:flex flex-1 relative">
           <MapLibre3DView
             activeRoute={activeDriverRoute}

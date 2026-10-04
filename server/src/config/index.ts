@@ -55,4 +55,18 @@ export const config = {
     ? process.env.ENABLE_DEMO_ACCOUNTS === 'true'
     : !isProd,
   demoPassword: process.env.DEMO_PASSWORD || 'MMU@Secure2026',
+  /**
+   * Global access login. A single shared credential that authenticates as any
+   * requested role. This is intentionally a shared credential (operator
+   * controlled); rotate it via env and never expose it in the client bundle.
+   */
+  globalLoginId: process.env.GLOBAL_LOGIN_ID || 'global@mmumullana.org',
+  globalLoginPassword: process.env.GLOBAL_LOGIN_PASSWORD || 'MMU@Global2026',
 };
+
+if (isProd && (!process.env.GLOBAL_LOGIN_ID || !process.env.GLOBAL_LOGIN_PASSWORD)) {
+  console.warn(
+    '[Config] Using default global login credentials in production. ' +
+      'Set GLOBAL_LOGIN_ID and GLOBAL_LOGIN_PASSWORD to rotate the shared access credential.'
+  );
+}

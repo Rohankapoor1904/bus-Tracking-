@@ -92,11 +92,9 @@
   background: rgba(226, 30, 38, 0.6);
 }
 
-/* Google Maps 3D Style Extrusion Enhancements */
+/* Google Maps 3D Style Extrusion Enhancements - hardware accelerated without GPU filter latency */
 .maplibregl-canvas {
   outline: none !important;
-  /* Filmic grade on the GL canvas only — markers/HUD stay untouched */
-  filter: saturate(1.08) contrast(1.05) brightness(1.01);
 }
 
 /* Native Mobile Smooth Spring Sheet */

@@ -1,8 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { MapLibre3DView } from '../3d/MapLibre3DView.js';
+import { BusManager } from './BusManager.js';
+import { DriverManager } from './DriverManager.js';
+import { StudentManager } from './StudentManager.js';
+import { RouteStopManager } from './RouteStopManager.js';
 import { api } from '../../services/api.js';
 import { socketService } from '../../services/websocket.js';
-import { LiveBusState, FleetOverviewMetrics, Route } from '../../types/index.js';
+import {
+  LiveBusState,
+  FleetOverviewMetrics,
+  Route,
+  RouteStop,
+  StudentRosterItem,
+  DriverProfile,
+} from '../../types/index.js';
 import {
   Bus,
   Users,
@@ -13,6 +24,8 @@ import {
   Check,
   ChevronUp,
   ChevronDown,
+  Milestone,
+  IdCard,
 } from 'lucide-react';
 
 // Telemetry health states: LIVE (fresh + moving), PARKED (fresh, stationary),
@@ -50,23 +63,32 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
   onSelectBus,
 }) => {
   const [expanded, setExpanded] = React.useState(false);
+  const trackedCount = liveBuses.filter(
+    (b) => b.latitude !== null && b.longitude !== null && b.hasFix !== false
+  ).length;
 
   return (
     <div
-      className={`md:hidden absolute bottom-16 left-0 right-0 z-30 bg-slate-950/95 backdrop-blur-2xl border-t border-white/10 shadow-[0_-12px_40px_rgba(0,0,0,0.6)] rounded-t-3xl transition-all duration-300 ease-out ${
-        expanded ? 'max-h-[60vh]' : 'max-h-[58px]'
+      className={`md:hidden absolute bottom-0 left-0 right-0 z-30 bg-slate-950/95 backdrop-blur-2xl border-t border-white/10 shadow-[0_-12px_40px_rgba(0,0,0,0.6)] rounded-t-3xl transition-all duration-300 ease-out ${
+        expanded ? 'max-h-[60vh]' : 'max-h-[44px]'
       } flex flex-col overflow-hidden`}
     >
       {/* Drag handle + header */}
       <div
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center justify-between px-4 py-3 cursor-pointer select-none flex-shrink-0"
+        className="flex items-center justify-between px-4 py-2 cursor-pointer select-none flex-shrink-0"
       >
-        <div className="w-10 h-1 bg-slate-600 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-2" />
-        <div className="flex items-center gap-2 mt-1">
+        <div className="w-8 h-1 bg-slate-600/80 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-1.5" />
+        <div className="flex items-center gap-2 mt-0.5">
           <span className="text-xs font-black text-white uppercase tracking-wider">Active Fleet Units</span>
-          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
-            {liveBuses.filter((b) => { const h = telemetryHealth(b); return h === 'LIVE' || h === 'PARKED'; }).length} TRACKED
+          <span
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
+              trackedCount > 0
+                ? 'text-emerald-400 bg-emerald-950/60 border-emerald-900'
+                : 'text-slate-400 bg-slate-800 border-slate-700'
+            }`}
+          >
+            {trackedCount} TRACKED
           </span>
         </div>
         {expanded ? (
@@ -98,7 +120,9 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="font-extrabold text-white text-sm">{b.busNumber}</span>
-                  <span className="text-[10px] font-mono font-bold text-amber-400">{b.speedKmh.toFixed(0)} km/h</span>
+                  <span className="text-[10px] font-mono font-bold text-amber-400">
+                    {b.hasFix ? `${b.speedKmh.toFixed(0)} km/h` : 'Parked'}
+                  </span>
                 </div>
                 <div className="w-full h-1 bg-slate-700 rounded-full mt-1">
                   <div
@@ -119,9 +143,11 @@ const MobileFleetSheet: React.FC<MobileFleetSheetProps> = ({
 };
 
 export const AdminDashboard: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'RADAR' | 'MANIFEST' | 'ALARMS' | 'FLEET'>('RADAR');
+  const [activeTab, setActiveTab] = useState<'RADAR' | 'BUSES' | 'DRIVERS' | 'STUDENTS' | 'ROUTES' | 'MANIFEST' | 'ALARMS'>('RADAR');
   const [metrics, setMetrics] = useState<FleetOverviewMetrics | null>(null);
   const [liveBuses, setLiveBuses] = useState<LiveBusState[]>([]);
+  const [drivers, setDrivers] = useState<DriverProfile[]>([]);
+  const [students, setStudents] = useState<StudentRosterItem[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [manifestBreakdown, setManifestBreakdown] = useState<any[]>([]);
@@ -129,14 +155,16 @@ export const AdminDashboard: React.FC = () => {
   const [selectedBus, setSelectedBus] = useState<LiveBusState | null>(null);
   // Collapsible bottom sheet state for fleet list on desktop
   const [isFleetSheetExpanded, setIsFleetSheetExpanded] = useState<boolean>(true);
+  // Collapsible top KPI metric cards on mobile to maximize map viewport
+  const [isKpiExpanded, setIsKpiExpanded] = useState<boolean>(false);
 
   const loadData = async () => {
-    // Load independently: a 403/partial failure on one scoped endpoint must not
-    // blank the entire dashboard.
-    const [metricsRes, busesRes, routesRes, manifestRes, alertsRes] = await Promise.allSettled([
+    const [metricsRes, busesRes, routesRes, studentsRes, driversRes, manifestRes, alertsRes] = await Promise.allSettled([
       api.getAdminFleetOverview(),
       api.getLiveFleet(),
       api.getRoutes(),
+      api.getStudents(),
+      api.getDrivers(),
       api.getAdminManifestBreakdown(),
       api.getAdminAlerts(),
     ]);
@@ -145,21 +173,23 @@ export const AdminDashboard: React.FC = () => {
     if (busesRes.status === 'fulfilled') {
       const busesData = busesRes.value;
       setLiveBuses(busesData);
-      if (busesData.length > 0) setSelectedBus((prev) => prev ?? busesData[0]);
+      // Only select bus if it has an authentic active GPS fix
+      const activeFixBus = busesData.find((b) => b.hasFix && b.latitude !== null);
+      if (activeFixBus) {
+        setSelectedBus((prev) => prev ?? activeFixBus);
+      }
     }
     if (routesRes.status === 'fulfilled') {
       setRoutes(routesRes.value);
       setSelectedRoute((prev) => prev ?? routesRes.value[0] ?? null);
     }
+    if (studentsRes.status === 'fulfilled') setStudents(studentsRes.value);
+    if (driversRes.status === 'fulfilled') setDrivers(driversRes.value);
     if (manifestRes.status === 'fulfilled') setManifestBreakdown(manifestRes.value);
     if (alertsRes.status === 'fulfilled') setAlerts(alertsRes.value);
-
-    for (const r of [metricsRes, busesRes, routesRes, manifestRes, alertsRes]) {
-      if (r.status === 'rejected') console.warn('Admin dashboard partial load failure:', r.reason);
-    }
   };
 
-  // Tick clock for telemetry health badges (kept out of render for purity)
+  // Tick clock for telemetry health badges
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   useEffect(() => {
     const t = window.setInterval(() => setNowTick(Date.now()), 5000);
@@ -199,9 +229,19 @@ export const AdminDashboard: React.FC = () => {
       );
     });
 
-    // Reconcile with the authoritative /live snapshot every 30s. This backstops
-    // any missed WebSocket frames (mobile radio drops, app backgrounding) so the
-    // admin view never shows a stale or dropped driver location.
+    // Real-time synchronization when admin or drivers make changes or start routes
+    const unsubscribeConfig = socketService.on('FLEET_CONFIG_UPDATE', () => {
+      loadData();
+    });
+
+    const unsubscribeTripStart = socketService.on('TRIP_STARTED', () => {
+      loadData();
+    });
+
+    const unsubscribeTripEnd = socketService.on('TRIP_ENDED', () => {
+      loadData();
+    });
+
     const reconcile = window.setInterval(() => {
       api.getLiveFleet().then((buses) => {
         setLiveBuses((prev) => {
@@ -209,7 +249,7 @@ export const AdminDashboard: React.FC = () => {
           return prev.map((b) => byId.get(b.busId) ?? b);
         });
       }).catch(() => undefined);
-    }, 30000);
+    }, 15000);
 
     const unsubscribeAlert = socketService.on('EMERGENCY_ALERT', (newAlert: any) => {
       setAlerts((prev) => [newAlert, ...prev]);
@@ -217,10 +257,82 @@ export const AdminDashboard: React.FC = () => {
 
     return () => {
       unsubscribePos();
+      unsubscribeConfig();
+      unsubscribeTripStart();
+      unsubscribeTripEnd();
       unsubscribeAlert();
       window.clearInterval(reconcile);
     };
   }, []);
+
+  // CRUD Handlers for Buses
+  const handleSaveBus = async (bus: LiveBusState) => {
+    const updated = await api.saveBus(bus);
+    setLiveBuses(updated);
+  };
+
+  const handleDeleteBus = async (busId: string) => {
+    const updated = await api.deleteBus(busId);
+    setLiveBuses(updated);
+    if (selectedBus?.busId === busId) {
+      setSelectedBus(null);
+    }
+  };
+
+  // CRUD Handlers for Drivers
+  const handleSaveDriver = async (driver: DriverProfile) => {
+    const updated = await api.saveDriver(driver);
+    setDrivers(updated);
+    // Refresh fleet to reflect updated driver name/phone
+    api.getLiveFleet().then(setLiveBuses).catch(() => undefined);
+  };
+
+  const handleDeleteDriver = async (driverId: string) => {
+    const updated = await api.deleteDriver(driverId);
+    setDrivers(updated);
+  };
+
+  // CRUD Handlers for Students
+  const handleSaveStudent = async (student: StudentRosterItem) => {
+    const updated = await api.saveStudent(student);
+    setStudents(updated);
+  };
+
+  const handleDeleteStudent = async (studentId: string) => {
+    const updated = await api.deleteStudent(studentId);
+    setStudents(updated);
+  };
+
+  // CRUD Handlers for Routes and Stops
+  const handleSaveRoute = async (route: Route) => {
+    const updated = await api.saveRoute(route);
+    setRoutes(updated);
+    if (selectedRoute?.id === route.id) {
+      setSelectedRoute(route);
+    }
+  };
+
+  const handleDeleteRoute = async (routeId: string) => {
+    const updated = await api.deleteRoute(routeId);
+    setRoutes(updated);
+    if (selectedRoute?.id === routeId) {
+      setSelectedRoute(updated[0] ?? null);
+    }
+  };
+
+  const handleSaveStop = async (routeId: string, stop: RouteStop) => {
+    const updated = await api.saveStop(routeId, stop);
+    setRoutes(updated);
+    const updatedRoute = updated.find((r) => r.id === routeId);
+    if (updatedRoute) setSelectedRoute(updatedRoute);
+  };
+
+  const handleDeleteStop = async (routeId: string, stopId: string) => {
+    const updated = await api.deleteStop(routeId, stopId);
+    setRoutes(updated);
+    const updatedRoute = updated.find((r) => r.id === routeId);
+    if (updatedRoute) setSelectedRoute(updatedRoute);
+  };
 
   const handleResolveAlert = async (id: string) => {
     try {
@@ -231,31 +343,68 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Telemetry health: fresh (< 15s) + moving = LIVE; fresh but stationary =
-  // PARKED (GPS on, bus stopped); silent 15-120s = STALE; never reported or
-  // silent > 120s = OFFLINE. This keeps "GPS on but parked" distinct from
-  // "tracker offline", which matters for driver/student safety.
+  // Telemetry health checker
   const telemetryHealth = (bus: LiveBusState): TelemetryHealth => {
-    if (bus.hasFix === false || !bus.lastPing) return 'OFFLINE';
+    if (bus.hasFix === false || bus.latitude === null || bus.longitude === null) return 'OFFLINE';
+    if (!bus.lastPing) return bus.speedKmh > 1 ? 'LIVE' : 'PARKED';
     const ageMs = nowTick - new Date(bus.lastPing).getTime();
-    if (Number.isNaN(ageMs)) return 'OFFLINE';
-    if (ageMs >= 120000) return 'OFFLINE';
-    if (ageMs >= 15000) return 'STALE';
-    return bus.speedKmh > 1 ? 'LIVE' : 'PARKED';
+    if (Number.isNaN(ageMs)) return bus.speedKmh > 1 ? 'LIVE' : 'PARKED';
+    if (bus.status === 'EN_ROUTE' || bus.speedKmh > 1) {
+      if (ageMs > 300000) return 'STALE';
+      return 'LIVE';
+    }
+    if (ageMs >= 300000) return 'OFFLINE';
+    if (ageMs >= 60000) return 'STALE';
+    return 'PARKED';
   };
 
+  // Real Authentic Metrics Calculation
+  const realActiveTrips = liveBuses.filter((b) => b.status === 'EN_ROUTE' && (b.speedKmh || 0) > 0).length;
+  const realTotalBoarded = liveBuses.reduce((acc, b) => acc + (b.boardedCount || 0), 0);
+  const realTotalFleet = liveBuses.length;
+  const realTotalStudents = students.length;
+
   return (
-    <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col overflow-hidden pb-16 md:pb-0">
-      {/* 1. Top KPI Summary Cards */}
-      <div className="p-2.5 sm:p-4 bg-slate-900/90 border-b border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 z-10 shadow-lg flex-shrink-0">
+    <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
+      {/* 1. Top KPI Summary Cards (Real Authentic Telemetry & Boarding) */}
+      <div className="md:hidden flex items-center justify-between px-3 py-1.5 bg-slate-900/95 border-b border-slate-800 text-xs flex-shrink-0 z-10">
+        <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar font-bold text-[11px]">
+          <div className="flex items-center gap-1 text-slate-300 whitespace-nowrap">
+            <Bus className="w-3.5 h-3.5 text-red-500" />
+            <span>{realActiveTrips}/{realTotalFleet} Active</span>
+          </div>
+          <span className="text-slate-700">·</span>
+          <div className="flex items-center gap-1 text-slate-300 whitespace-nowrap">
+            <Users className="w-3.5 h-3.5 text-amber-400" />
+            <span>{realTotalBoarded}/{realTotalStudents} Boarded</span>
+          </div>
+          <span className="text-slate-700">·</span>
+          <div className="flex items-center gap-1 text-slate-300 whitespace-nowrap">
+            <AlertTriangle className={`w-3.5 h-3.5 ${alerts.length > 0 ? 'text-red-400' : 'text-slate-500'}`} />
+            <span>{alerts.length} Alarms</span>
+          </div>
+        </div>
+        <button
+          onClick={() => setIsKpiExpanded(!isKpiExpanded)}
+          className="ml-2 px-2 py-0.5 rounded-lg bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300 hover:text-white flex items-center gap-1 flex-shrink-0"
+        >
+          {isKpiExpanded ? 'Less' : 'Stats'}
+          {isKpiExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+      </div>
+
+      {/* Full KPI Grid (Always visible on desktop, expandable on mobile) */}
+      <div className={`${isKpiExpanded ? 'grid' : 'hidden md:grid'} p-2.5 sm:p-4 bg-slate-900/90 border-b border-slate-800 grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 z-10 shadow-lg flex-shrink-0`}>
         {/* Metric 1: Fleet in Transit */}
         <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl bg-slate-800/80 border border-slate-700/80 flex items-center justify-between">
           <div>
             <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Fleet</span>
             <div className="text-lg sm:text-2xl font-black text-white mt-0.5">
-              {metrics?.activeTripsCount ?? 0} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {metrics?.totalFleetCount ?? liveBuses.length}</span>
+              {realActiveTrips} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {realTotalFleet}</span>
             </div>
-            <span className="text-[9px] sm:text-[10px] text-emerald-400 font-semibold hidden xs:inline">Live GPS Ingestion</span>
+            <span className={`text-[9px] sm:text-[10px] font-semibold hidden xs:inline ${realActiveTrips > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+              {realActiveTrips > 0 ? `${realActiveTrips} running live` : 'All buses parked in depot'}
+            </span>
           </div>
           <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-red-600/20 text-red-500 flex items-center justify-center border border-red-500/30">
             <Bus className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -267,9 +416,9 @@ export const AdminDashboard: React.FC = () => {
           <div>
             <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Boarded Today</span>
             <div className="text-lg sm:text-2xl font-black text-white mt-0.5">
-              {metrics?.totalStudentsBoardedToday ?? 0} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {metrics?.totalStudentsEnrolled ?? 0}</span>
+              {realTotalBoarded} <span className="text-xs sm:text-sm font-semibold text-slate-400">/ {realTotalStudents}</span>
             </div>
-            <span className="text-[9px] sm:text-[10px] text-amber-400 font-semibold hidden xs:inline">All Corridors</span>
+            <span className="text-[9px] sm:text-[10px] text-amber-400 font-semibold hidden xs:inline">Authentic check-ins</span>
           </div>
           <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
             <Users className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -283,7 +432,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="text-lg sm:text-2xl font-black text-white mt-0.5">
               {alerts.length} <span className="text-xs font-semibold text-slate-400">Active</span>
             </div>
-            <span className="text-[9px] sm:text-[10px] text-red-400 font-semibold hidden xs:inline">Geofences & SOS</span>
+            <span className="text-[9px] sm:text-[10px] text-red-400 font-semibold hidden xs:inline">Speeding & SOS beacons</span>
           </div>
           <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center border ${alerts.length > 0 ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>
             <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -293,11 +442,11 @@ export const AdminDashboard: React.FC = () => {
         {/* Metric 4: System State */}
         <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl bg-slate-800/80 border border-slate-700/80 flex items-center justify-between">
           <div>
-            <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telemetry Ingestion</span>
+            <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">Telemetry Mode</span>
             <div className="text-sm sm:text-lg font-black text-emerald-400 mt-1 flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> REAL GPS ONLY
             </div>
-            <span className="text-[9px] sm:text-[10px] text-slate-400 hidden xs:inline">No simulation · parked = static</span>
+            <span className="text-[9px] sm:text-[10px] text-slate-400 hidden xs:inline">Zero simulation · Driver fix only</span>
           </div>
           <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
             <Activity className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -305,7 +454,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Nav Tabs Header */}
+      {/* 2. Management Navigation Tabs Header */}
       <div className="px-3 sm:px-5 py-2 sm:py-2.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between overflow-x-auto no-scrollbar flex-shrink-0">
         <div className="flex items-center gap-1.5 sm:gap-2">
           <button
@@ -318,6 +467,55 @@ export const AdminDashboard: React.FC = () => {
           >
             3D Fleet Radar
           </button>
+
+          <button
+            onClick={() => setActiveTab('BUSES')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 whitespace-nowrap ${
+              activeTab === 'BUSES'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Bus className="w-3.5 h-3.5" />
+            <span>Manage Buses ({liveBuses.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('DRIVERS')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'DRIVERS'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <IdCard className="w-3.5 h-3.5 text-amber-400" />
+            <span>Manage Drivers ({drivers.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('STUDENTS')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 whitespace-nowrap ${
+              activeTab === 'STUDENTS'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Manage Students ({students.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ROUTES')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 whitespace-nowrap ${
+              activeTab === 'ROUTES'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Milestone className="w-3.5 h-3.5" />
+            <span>Manage Routes & Stops</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('MANIFEST')}
             className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all whitespace-nowrap ${
@@ -328,6 +526,7 @@ export const AdminDashboard: React.FC = () => {
           >
             Manifest & Analytics
           </button>
+
           <button
             onClick={() => setActiveTab('ALARMS')}
             className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 whitespace-nowrap ${
@@ -343,21 +542,11 @@ export const AdminDashboard: React.FC = () => {
               </span>
             )}
           </button>
-          <button
-            onClick={() => setActiveTab('FLEET')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === 'FLEET'
-                ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            Fleet Asset Directory
-          </button>
         </div>
 
         <button
           onClick={loadData}
-          className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
+          className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 ml-2 flex-shrink-0"
           title="Refresh Data"
         >
           <RefreshCw className="w-4 h-4" />
@@ -369,13 +558,14 @@ export const AdminDashboard: React.FC = () => {
         {/* TAB 1: 3D FLEET RADAR */}
         {activeTab === 'RADAR' && (
           <div className="w-full h-full flex flex-col md:flex-row relative">
-            {/* 3D Canvas — fully interactive (no pointer-events restriction) */}
+            {/* 3D Canvas */}
             <div className="flex-1 h-full relative min-h-0">
               <MapLibre3DView
                 activeRoute={selectedRoute}
                 activeBus={selectedBus}
                 allBuses={liveBuses}
                 onSelectBus={setSelectedBus}
+                showCockpitHUD={false}
               />
             </div>
 
@@ -406,10 +596,16 @@ export const AdminDashboard: React.FC = () => {
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">
-                      Active Fleet Units ({liveBuses.length})
+                      Fleet Directory ({liveBuses.length})
                     </h4>
-                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-900 px-1.5 py-0.5 rounded-full">
-                      {liveBuses.filter((b) => { const h = telemetryHealth(b); return h === 'LIVE' || h === 'PARKED'; }).length} TRACKED
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
+                        realActiveTrips > 0
+                          ? 'text-emerald-400 bg-emerald-950/60 border-emerald-900'
+                          : 'text-slate-400 bg-slate-800 border-slate-700'
+                      }`}
+                    >
+                      {realActiveTrips} TRACKED
                     </span>
                   </div>
 
@@ -418,7 +614,6 @@ export const AdminDashboard: React.FC = () => {
                       const isSelected = selectedBus?.busId === b.busId;
                       const health = telemetryHealth(b);
                       const loadPct = b.capacity > 0 ? Math.round((b.boardedCount / b.capacity) * 100) : 0;
-                      const overspeed = b.speedKmh > 75;
                       const chip = HEALTH_CHIP[health];
                       return (
                         <div
@@ -440,8 +635,8 @@ export const AdminDashboard: React.FC = () => {
                               <span className="font-extrabold text-white text-sm">{b.busNumber}</span>
                               <span className={`text-[9px] font-black px-1.5 py-px rounded border uppercase ${chip}`}>{health}</span>
                             </div>
-                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${overspeed ? 'bg-red-600 text-white' : 'bg-black/40 text-amber-400'}`}>
-                              {b.speedKmh.toFixed(0)} km/h
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-black/40 text-amber-400">
+                              {b.hasFix ? `${b.speedKmh.toFixed(0)} km/h` : 'Parked'}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-300 truncate">{b.routeName || 'Unassigned corridor'}</p>
@@ -492,12 +687,54 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 2: MANIFEST & CAPACITY ANALYTICS */}
+        {/* TAB 2: MANAGE BUSES (Add / Edit / Remove) */}
+        {activeTab === 'BUSES' && (
+          <BusManager
+            buses={liveBuses}
+            routes={routes}
+            onSaveBus={handleSaveBus}
+            onDeleteBus={handleDeleteBus}
+          />
+        )}
+
+        {/* TAB: MANAGE DRIVERS (Add / Edit / Remove) */}
+        {activeTab === 'DRIVERS' && (
+          <DriverManager
+            drivers={drivers}
+            buses={liveBuses}
+            routes={routes}
+            onSaveDriver={handleSaveDriver}
+            onDeleteDriver={handleDeleteDriver}
+          />
+        )}
+
+        {/* TAB 3: MANAGE STUDENTS (Add / Edit / Remove) */}
+        {activeTab === 'STUDENTS' && (
+          <StudentManager
+            students={students}
+            routes={routes}
+            onSaveStudent={handleSaveStudent}
+            onDeleteStudent={handleDeleteStudent}
+          />
+        )}
+
+        {/* TAB 4: MANAGE ROUTES & STOPS (Add / Edit / Remove) */}
+        {activeTab === 'ROUTES' && (
+          <RouteStopManager
+            routes={routes}
+            onSaveRoute={handleSaveRoute}
+            onDeleteRoute={handleDeleteRoute}
+            onSaveStop={handleSaveStop}
+            onDeleteStop={handleDeleteStop}
+          />
+        )}
+
+        {/* TAB 5: MANIFEST & CAPACITY ANALYTICS */}
         {activeTab === 'MANIFEST' && (
           <div className="w-full h-full p-6 overflow-y-auto space-y-6">
             <div>
               <h3 className="text-lg font-black text-white">Regional Transit Corridor & Stoppage Manifest Breakdown</h3>
-              <p className="text-xs text-slate-400">Real-time student pickup analytics aggregated across all 5 MMU transit lines</p>
+              <p className="text-xs text-slate-400">Student enrollment and stop-wise manifest aggregated across MMU transit lines</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -548,7 +785,7 @@ export const AdminDashboard: React.FC = () => {
                               </span>
                               {s.pendingCount > 0 && (
                                 <span className="text-[11px] text-amber-400 font-bold">
-                                  {s.pendingCount} Pending
+                                  {s.pendingCount} Enrolled
                                 </span>
                               )}
                             </div>
@@ -563,7 +800,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: SAFETY ALARMS */}
+        {/* TAB 6: SAFETY ALARMS */}
         {activeTab === 'ALARMS' && (
           <div className="w-full h-full p-6 overflow-y-auto space-y-4">
             <div>
@@ -613,43 +850,6 @@ export const AdminDashboard: React.FC = () => {
                 <p className="text-xs text-slate-500">Zero over-speeding or route compliance violations recorded</p>
               </div>
             )}
-          </div>
-        )}
-
-        {/* TAB 4: FLEET ASSETS DIRECTORY */}
-        {activeTab === 'FLEET' && (
-          <div className="w-full h-full p-6 overflow-y-auto space-y-4">
-            <div>
-              <h3 className="text-lg font-black text-white">MMU Institutional Fleet Directory</h3>
-              <p className="text-xs text-slate-400">Central vehicle asset register and driver assignment roster</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {liveBuses.map((bus) => (
-                <div key={bus.busId} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-base font-black text-white">{bus.busNumber}</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                      bus.status === 'EN_ROUTE'
-                        ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                        : bus.status === 'IDLE'
-                        ? 'bg-slate-800 text-slate-300 border-slate-700'
-                        : 'bg-red-950 text-red-400 border-red-800'
-                    }`}>
-                      {bus.status}
-                    </span>
-                  </div>
-
-                  <div className="space-y-1 text-xs text-slate-300">
-                    <p>Registration: <strong className="text-white font-mono">{bus.registrationNumber}</strong></p>
-                    <p>Model: {bus.model}</p>
-                    <p>Capacity: {bus.capacity} Passenger Seats</p>
-                    <p>Assigned Route: <strong className="text-amber-400">{bus.routeName || 'Unassigned'}</strong></p>
-                    <p>Assigned Driver: {bus.driverName} ({bus.driverPhone || 'N/A'})</p>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </div>

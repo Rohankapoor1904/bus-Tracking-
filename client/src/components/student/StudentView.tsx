@@ -55,14 +55,11 @@ export const StudentView: React.FC<StudentViewProps> = () => {
         const coords = res.liveTracking.currentCoordinates;
         const rawLat = coords ? coords[1] : null;
         const rawLng = coords ? coords[0] : null;
-        // Enforce MMU Mullana/Ambala transit corridor bounds (prevent Delhi IP/remote jump)
         const hasValidFix =
           rawLat !== null &&
           rawLng !== null &&
-          rawLat >= 29.8 &&
-          rawLat <= 30.9 &&
-          rawLng >= 76.2 &&
-          rawLng <= 77.7;
+          !isNaN(rawLat) &&
+          !isNaN(rawLng);
 
         const parked: LiveBusState = {
           busId: res.bus.id,
@@ -111,15 +108,17 @@ export const StudentView: React.FC<StudentViewProps> = () => {
 
     const token = api.getToken() || undefined;
     // Subscribe to the student's own assigned corridor (not a hardcoded route).
+    // connect() reconnects when token/route changed; subscribe() covers the
+    // case where the socket was already open on this exact session.
     socketService.connect(token, routeId);
+    socketService.subscribe(`route:${routeId}`);
 
     const unsubscribePos = socketService.on('BUS_POSITION_UPDATE', (update: any) => {
       setLiveBus((prev) => {
         if (!prev) return null;
         // Ignore packets for other buses on shared route channel
         if (update.busId && update.busId !== prev.busId) return prev;
-        // Filter out any out-of-bounds telemetry (e.g. from Delhi)
-        if (update.latitude < 29.8 || update.latitude > 30.9) return prev;
+        if (isNaN(update.latitude) || isNaN(update.longitude)) return prev;
         const live = (update.speedKmh || 0) > 0.5;
         return {
           ...prev,
@@ -140,6 +139,18 @@ export const StudentView: React.FC<StudentViewProps> = () => {
       });
     });
 
+    const unsubscribeTripStart = socketService.on('TRIP_STARTED', () => {
+      loadAllocation();
+    });
+
+    const unsubscribeTripEnd = socketService.on('TRIP_ENDED', () => {
+      loadAllocation();
+    });
+
+    const unsubscribeConfig = socketService.on('FLEET_CONFIG_UPDATE', () => {
+      loadAllocation();
+    });
+
     const unsubscribeGeofence = socketService.on('GEOFENCE_APPROACHING_ALERT', (alert: any) => {
       setGeofenceAlert(alert.message);
       audioAlert.playGeofenceApproachingAlert();
@@ -152,6 +163,9 @@ export const StudentView: React.FC<StudentViewProps> = () => {
 
     return () => {
       unsubscribePos();
+      unsubscribeTripStart();
+      unsubscribeTripEnd();
+      unsubscribeConfig();
       unsubscribeGeofence();
     };
   }, [data?.route?.id]);
@@ -525,7 +539,7 @@ export const StudentView: React.FC<StudentViewProps> = () => {
 
       {/* 3. Mobile: Floating Frosted-Glass Bottom Sheet */}
       <div
-        className={`md:hidden fixed inset-x-2 transition-all duration-300 ease-out z-30 pointer-events-auto bg-slate-950/95 backdrop-blur-3xl border border-white/15 shadow-[0_16px_50px_rgba(0,0,0,0.75)] rounded-3xl overflow-hidden flex flex-col ${
+        className={`md:hidden fixed inset-x-2 transition-all duration-300 ease-out z-30 pointer-events-auto bg-slate-950/95 backdrop-blur-md border border-white/15 shadow-[0_16px_50px_rgba(0,0,0,0.75)] rounded-3xl overflow-hidden flex flex-col ${
           isDrawerExpanded
             ? 'bottom-2 top-16 rounded-3xl'
             : 'bottom-2 h-[148px]'

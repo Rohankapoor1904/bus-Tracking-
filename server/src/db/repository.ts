@@ -82,6 +82,10 @@ export interface FleetRepository {
   resolveAlert(id: string): Promise<boolean>;
 
   getAdminFleetMetrics(): Promise<AdminFleetMetrics>;
+
+  getAllDrivers(): Promise<any[]>;
+  saveDriver(driver: any): Promise<any>;
+  deleteDriver(id: string): Promise<boolean>;
 }
 
 export type { UserRole };

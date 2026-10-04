@@ -5,6 +5,7 @@ import { Route, RouteStop, LiveBusState } from '../../types/index.js';
 import { OPENFREEMAP_STYLES, MAP_PROVIDER, olaStyle, olaTransformRequest } from '../../config/mapProviders.js';
 import { VehicleLerpEngine } from './VehicleLerpEngine.js';
 import { getRoadSnappedPath } from '../../services/roadRouter.js';
+import { ensureLocationPermission, watchDeviceFix, getDeviceFix } from '../../services/location.js';
 import bakedRoutesData from '../../services/baked-routes.json';
 import {
   Navigation,
@@ -35,6 +36,7 @@ interface MapLibre3DViewProps {
   onSelectBus?: (bus: LiveBusState) => void;
   onSelectStop?: (stop: RouteStop) => void;
   isCockpitMode?: boolean;
+  showCockpitHUD?: boolean;
 }
 
 const DEFAULT_CENTER: [number, number] = [77.04505, 30.25045]; // MMU Mullana Campus
@@ -67,7 +69,7 @@ const DASH_MARCH_SEQUENCE: number[][] = [
   [0, 3, 3, 1],
   [0, 3.5, 3, 0.5],
 ];
-const FLOW_STEP_MS = 85;
+const FLOW_STEP_MS = 250;
 
 // Cinematic sky / atmospheric haze for the vector styles
 const SKY_DAY: any = {
@@ -574,7 +576,7 @@ function buildGeofenceCircle(
   };
 }
 
-export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
+const MapLibre3DViewInner: React.FC<MapLibre3DViewProps> = ({
   activeRoute,
   activeBus,
   allBuses = [],
@@ -582,6 +584,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   onSelectBus,
   onSelectStop,
   isCockpitMode = false,
+  showCockpitHUD = true,
 }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -612,10 +615,16 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
   const [buildingMode, setBuildingMode] = useState<BuildingViewMode>('SOLID');
   const [_userGeo, setUserGeo] = useState<UserGeoState | null>(null);
   const [geoNotice, setGeoNotice] = useState<{
-    type: 'REMOTE_IP' | 'LOCATED';
+    type: 'REMOTE_IP' | 'LOCATED' | 'LOCATING' | 'ERROR';
     message: string;
     distKm: number;
   } | null>(null);
+  const [locating, setLocating] = useState<boolean>(false);
+  const locatingRef = useRef<boolean>(false);
+  // Last authentic device fix — kept even when the map isn't ready yet so the
+  // very first fix is never dropped (dropping it + auto-centering on the
+  // campus default is exactly why "Locate Me" used to show the college).
+  const userFixRef = useRef<[number, number] | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
 
   const [is3DMode, setIs3DMode] = useState<boolean>(true);
@@ -658,8 +667,7 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     setGeoNotice(null);
   }, []);
 
-  // Ref to track GPS watch ID for cleanup
-  const geoWatchIdRef = useRef<number | null>(null);
+  // Ref to track first GPS lock for auto-center
   const geoFirstLockRef = useRef<boolean>(false);
 
   // Render / update the user location puck on the map
@@ -687,88 +695,138 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     }
   }, []);
 
-  // Active GPS watch — starts on mount, continuous authentic device tracking
+  // Active GPS watch — native plugin on device, browser API on web.
+  // The fix is ALWAYS stored in userFixRef first (even before the map exists)
+  // so the first fix can never be lost while the map still shows the campus.
   useEffect(() => {
-    if (!('geolocation' in navigator)) return;
+    let stopWatch: (() => void) | undefined;
+    let cancelled = false;
     geoFirstLockRef.current = false;
 
-    geoWatchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const lng = pos.coords.longitude;
-        const lat = pos.coords.latitude;
-        const dLat = (lat - 30.25045) * 111.2;
-        const dLon = (lng - 77.04505) * 96.3;
-        const distKm = Math.round(Math.sqrt(dLat * dLat + dLon * dLon));
+    const handleFix = (fix: { latitude: number; longitude: number }) => {
+      if (cancelled) return;
+      const lng = fix.longitude;
+      const lat = fix.latitude;
+      userFixRef.current = [lng, lat];
+      const dLat = (lat - 30.25045) * 111.2;
+      const dLon = (lng - 77.04505) * 96.3;
+      const distKm = Math.round(Math.sqrt(dLat * dLat + dLon * dLon));
 
-        setUserGeo({
-          coords: [lng, lat],
-          isDelhiOrRemote: distKm > 45,
-          distanceKm: distKm,
-          label: distKm <= 45 ? 'Near MMU Transit Route' : `Home / Device Location (~${distKm} km)`,
-        });
+      setUserGeo({
+        coords: [lng, lat],
+        isDelhiOrRemote: distKm > 45,
+        distanceKm: distKm,
+        label: distKm <= 45 ? 'Near MMU Transit Route' : `Home / Device Location (~${distKm} km)`,
+      });
 
-        // Always show the user's authentic location marker on map
-        upsertUserMarker(lng, lat, `Your GPS Position (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
+      // Always show the user's authentic location marker on map
+      upsertUserMarker(lng, lat, `Your GPS Position (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
 
-        // Auto-center on very first GPS fix
-        if (!geoFirstLockRef.current) {
-          geoFirstLockRef.current = true;
+      // Auto-center on very first GPS / Wi-Fi fix
+      if (!geoFirstLockRef.current) {
+        geoFirstLockRef.current = true;
+        const map = mapRef.current;
+        if (map) {
           setGeoNotice(null);
-          const map = mapRef.current;
-          if (map) {
-            // If user is within 50 km, fly to their location
-            if (distKm <= 50) {
-              map.flyTo({ center: [lng, lat], zoom: 16.2, pitch: PITCH_3D, duration: 1400 });
-            } else {
-              // User is at home further away: show subtle banner but keep ME marker active
-              setGeoNotice({
-                type: 'REMOTE_IP',
-                message: `📍 Located at your device location (~${distKm} km from campus). Tap 'Locate Me' or 'Fit Route' to navigate.`,
-                distKm,
-              });
-            }
-          }
+          // Always fly directly to user's authentic real location
+          map.flyTo({ center: [lng, lat], zoom: 16.2, pitch: PITCH_3D, duration: 1400 });
         }
-      },
-      (err) => {
-        console.warn('Geolocation watch notice:', err.message);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 3000 }
-    );
+        // If the map isn't ready yet, the mapLoaded effect places the
+        // puck + centers as soon as it is — the fix is safe in userFixRef.
+      }
+    };
+
+    const handleErr = (err: { code: number; message: string }) => {
+      if (cancelled) return;
+      console.warn('Geolocation watch notice:', err.message);
+      if (err.code === 1) {
+        // Permission denied: phone location ON is not enough — the app needs
+        // Allow. Show it prominently instead of failing silently.
+        setGeoNotice({
+          type: 'ERROR',
+          message:
+            '📍 Location permission denied — “ME” pin nahi dikhega. Phone Settings → Apps → MMU FleetRadar → Permissions → Location → Allow karein, phir Locate Me dabayein.',
+          distKm: 0,
+        });
+      }
+    };
+
+    (async () => {
+      if (cancelled) return;
+      await ensureLocationPermission().catch(() => undefined);
+      if (cancelled) return;
+      try {
+        stopWatch = await watchDeviceFix(handleFix, handleErr);
+      } catch (e: any) {
+        handleErr({ code: 2, message: e?.message ?? 'Location watch failed' });
+      }
+    })();
 
     return () => {
-      if (geoWatchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(geoWatchIdRef.current);
-        geoWatchIdRef.current = null;
-      }
+      cancelled = true;
+      stopWatch?.();
     };
   }, [upsertUserMarker]);
 
-  // Locate Me FAB — flies camera to user's exact device GPS position
+  // If the first GPS fix arrived before the map was ready, place the puck now.
+  useEffect(() => {
+    if (!mapLoaded || !userFixRef.current || userMarkerRef.current) return;
+    const [lng, lat] = userFixRef.current;
+    upsertUserMarker(lng, lat, `Your GPS Position (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
+    mapRef.current?.flyTo({ center: [lng, lat], zoom: 16.2, pitch: PITCH_3D, duration: 1400 });
+    setGeoNotice(null);
+  }, [mapLoaded, upsertUserMarker]);
+
+  // Locate Me — ALWAYS fetches a fresh fix. The old code returned early when a
+  // puck existed, so a stale/missing puck left the camera sitting on the
+  // campus default and users read that as "button shows college location".
   const checkUserLocation = useCallback((centerIfFound = false) => {
     const map = mapRef.current;
-    // If we already have a user position, fly there immediately
-    if (userMarkerRef.current) {
+    // Instant feedback: jump to the last known puck while the fresh fix loads.
+    if (userMarkerRef.current && map && centerIfFound) {
       const lngLat = userMarkerRef.current.getLngLat();
-      if (map && centerIfFound) {
-        map.flyTo({ center: [lngLat.lng, lngLat.lat], zoom: 16.5, pitch: PITCH_3D, duration: 1200 });
-      }
-      return;
+      map.flyTo({ center: [lngLat.lng, lngLat.lat], zoom: 16.5, pitch: PITCH_3D, duration: 900 });
     }
-    // Otherwise request an immediate high-accuracy fix
-    if (!('geolocation' in navigator)) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lng = pos.coords.longitude;
-        const lat = pos.coords.latitude;
-        upsertUserMarker(lng, lat, `Your GPS (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
+    if (locatingRef.current) return;
+    locatingRef.current = true;
+    setLocating(true);
+    setGeoNotice({ type: 'LOCATING', message: '📍 Aapki live location li ja rahi hai…', distKm: 0 });
+    (async () => {
+      await ensureLocationPermission().catch(() => undefined);
+      try {
+        const fix = await getDeviceFix(15000);
+        userFixRef.current = [fix.longitude, fix.latitude];
+        upsertUserMarker(
+          fix.longitude,
+          fix.latitude,
+          `Your GPS (${fix.latitude.toFixed(5)}, ${fix.longitude.toFixed(5)})`
+        );
+        setUserGeo((prev) => ({
+          coords: [fix.longitude, fix.latitude],
+          isDelhiOrRemote: prev?.isDelhiOrRemote ?? false,
+          distanceKm: prev?.distanceKm ?? 0,
+          label: 'Near MMU Transit Route',
+        }));
+        setGeoNotice(null);
         if (map && centerIfFound) {
-          map.flyTo({ center: [lng, lat], zoom: 16.5, pitch: PITCH_3D, duration: 1200 });
+          map.flyTo({ center: [fix.longitude, fix.latitude], zoom: 16.5, pitch: PITCH_3D, duration: 1200 });
         }
-      },
-      (err) => console.warn('Locate Me lookup:', err.message),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-    );
+      } catch (err: any) {
+        const code = err?.code;
+        console.warn('Locate Me lookup:', err?.message ?? err);
+        setGeoNotice({
+          type: 'ERROR',
+          message:
+            code === 1
+              ? '📍 Location permission denied — Settings → Apps → MMU FleetRadar → Permissions → Location → Allow karein, phir Locate Me dabayein.'
+              : `📍 Location nahi mili (${err?.message ?? 'GPS timeout'}) — khuli jagah par jaakar Locate Me dobara dabayein.`,
+          distKm: 0,
+        });
+      } finally {
+        locatingRef.current = false;
+        setLocating(false);
+      }
+    })();
   }, [upsertUserMarker]);
 
   // Dynamic Building View Mode Handler (Glass / Solid / Off)
@@ -1425,6 +1483,30 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 90 }), 'bottom-left');
 
     let ready = false;
+    let heavyLayersTimer: number | undefined;
+
+    // The procedural farmland / village / vegetation datasets are large
+    // (tens of thousands of features) and would block the first paint for
+    // hundreds of ms. Schedule them for idle time so the map becomes
+    // interactive immediately and the detail streams in afterwards.
+    const scheduleHeavyLayers = () => {
+      if (heavyLayersTimer !== undefined) window.clearTimeout(heavyLayersTimer);
+      const run = () => {
+        heavyLayersTimer = undefined;
+        addTerrainLayer(map);
+        addVillageHouseLayer(map);
+        addVegetationLayer(map);
+      };
+      const ric = (window as any).requestIdleCallback as
+        | ((cb: () => void, opts?: { timeout: number }) => number)
+        | undefined;
+      if (typeof ric === 'function') {
+        (window as any).requestIdleCallback(run, { timeout: 2500 });
+        heavyLayersTimer = -1;
+      } else {
+        heavyLayersTimer = window.setTimeout(run, 250);
+      }
+    };
 
     const onStyleReady = () => {
       if (ready) return;
@@ -1432,33 +1514,36 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       setMapLoaded(true);
 
       adoptBuildingLayer(map);
-      addTerrainLayer(map);
-      addVillageHouseLayer(map);
-      addVegetationLayer(map);
       applySky(map, mapStyleRef.current);
       rebuildOverlays(map);
-      // Cinematic settle onto MMU Mullana campus
-      map.easeTo({ center: DEFAULT_CENTER, zoom: 16.1, pitch: PITCH_3D, bearing: 28, duration: 900 });
+      scheduleHeavyLayers();
+      // Settle onto user's authentic fix if already known, else campus default
+      const settleCenter = userFixRef.current || DEFAULT_CENTER;
+      map.easeTo({ center: settleCenter, zoom: 16.1, pitch: PITCH_3D, bearing: 28, duration: 900 });
     };
 
     map.on('load', onStyleReady);
     map.on('style.load', () => {
       if (!ready) return;
       adoptBuildingLayer(map);
-      addTerrainLayer(map);
-      addVillageHouseLayer(map);
-      addVegetationLayer(map);
       applySky(map, mapStyleRef.current);
       rebuildOverlays(map);
+      scheduleHeavyLayers();
     });
+    let lastBearingUpdate = 0;
     map.on('rotate', () => {
       const b = map.getBearing();
-      setMapBearing(Math.round(b));
       // Keep the bus heading cone screen-accurate while the camera turns
       const heading = busHeadingRef.current;
       if (heading) {
         heading.style.transform = `rotate(${(lastBusBearingRef.current - b + 360) % 360}deg)`;
       }
+      // Throttle React state updates: a full re-render per rotation frame made
+      // the 3D view feel stuck while spinning the camera.
+      const now = performance.now();
+      if (now - lastBearingUpdate < 100) return;
+      lastBearingUpdate = now;
+      setMapBearing(Math.round(b));
     });
     // Manual pan = free camera (standard maps UX); the Follow button re-engages
     map.on('dragstart', () => setIsFollowingBus(false));
@@ -1484,6 +1569,10 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
       if (dashRafRef.current !== null) {
         cancelAnimationFrame(dashRafRef.current);
         dashRafRef.current = null;
+      }
+      if (typeof heavyLayersTimer === 'number' && heavyLayersTimer > 0) {
+        window.clearTimeout(heavyLayersTimer);
+        heavyLayersTimer = undefined;
       }
       lerpBox.current?.destroy();
       lerpBox.current = null;
@@ -1874,8 +1963,8 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         </div>
       )}
 
-      {/* 3. Map Controls — top right */}
-      <div className="absolute top-16 md:top-4 right-2 sm:right-4 z-20 flex flex-col items-end gap-2 pointer-events-auto">
+      {/* 3. Map Controls — top right corner */}
+      <div className="absolute top-2 sm:top-3 md:top-4 right-2 sm:right-4 z-20 flex flex-col items-end gap-2 pointer-events-auto">
 
         {/* ── Mobile compact toolbar ── */}
         <div className="flex md:hidden flex-wrap items-center justify-end bg-slate-950/90 backdrop-blur-xl p-1 rounded-2xl border border-white/10 shadow-2xl gap-1 max-w-[calc(100vw-1rem)]">
@@ -1923,8 +2012,9 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
           </button>
           <button
             onClick={() => checkUserLocation(true)}
-            className="p-1.5 rounded-xl bg-cyan-600/80 text-white hover:bg-cyan-500 transition-all"
-            title="Locate Me"
+            disabled={locating}
+            className={`p-1.5 rounded-xl text-white transition-all ${locating ? 'bg-cyan-800 animate-pulse' : 'bg-cyan-600/80 hover:bg-cyan-500'}`}
+            title={locating ? 'Locating…' : 'Locate Me — meri real location'}
           >
             <LocateFixed className="w-3.5 h-3.5" />
           </button>
@@ -2040,11 +2130,12 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
 
           <button
             onClick={() => checkUserLocation(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-700 to-sky-700 text-white border border-cyan-500/40 shadow-lg shadow-cyan-900/30 hover:from-cyan-600 hover:to-sky-600 transition-all backdrop-blur-md"
+            disabled={locating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-700 to-sky-700 text-white border border-cyan-500/40 shadow-lg shadow-cyan-900/30 hover:from-cyan-600 hover:to-sky-600 transition-all backdrop-blur-md disabled:opacity-70"
             title="Locate My GPS Position"
           >
-            <LocateFixed className="w-3.5 h-3.5" />
-            <span>Locate Me</span>
+            <LocateFixed className={`w-3.5 h-3.5 ${locating ? 'animate-spin' : ''}`} />
+            <span>{locating ? 'Locating…' : 'Locate Me'}</span>
           </button>
 
           <button
@@ -2091,92 +2182,94 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
         </div>
       </div>
 
-      {/* 4. High-Precision Real-Time Speedometer & Telemetry Cockpit HUD */}
-      <div className="absolute bottom-[10rem] sm:bottom-[11.5rem] md:bottom-5 left-2 sm:left-3 md:left-5 z-20 flex flex-col items-start gap-1.5 md:gap-2 pointer-events-auto select-none">
-        <div className="flex items-center gap-2 md:gap-3.5 bg-slate-950/85 backdrop-blur-2xl p-2 md:p-3 rounded-2xl md:rounded-3xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
-          {/* Radial Circular Speedometer Gauge */}
-          <div className="relative w-11 h-11 md:w-16 md:h-16 flex items-center justify-center flex-shrink-0">
-            <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 80 80">
-              {/* Background Arc */}
-              <circle
-                cx="40"
-                cy="40"
-                r="33"
-                stroke="currentColor"
-                strokeWidth="6"
-                className="text-slate-800"
-                fill="transparent"
-                strokeDasharray="207.3"
-                strokeDashoffset="51.8"
-                strokeLinecap="round"
-              />
-              {/* Animated Progress Arc */}
-              <circle
-                cx="40"
-                cy="40"
-                r="33"
-                stroke={currentSpeed > 75 ? '#ef4444' : currentSpeed > 50 ? '#f59e0b' : '#10b981'}
-                strokeWidth="6"
-                fill="transparent"
-                strokeLinecap="round"
-                strokeDasharray="207.3"
-                strokeDashoffset={207.3 - Math.min((currentSpeed / 100) * 155.5, 155.5) - 51.8}
-                style={{ transition: 'stroke-dashoffset 0.5s ease, stroke 0.3s ease' }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className={`text-sm md:text-base font-black font-mono leading-none ${currentSpeed > 75 ? 'text-red-400' : 'text-white'}`}>
-                {Math.round(currentSpeed)}
-              </span>
-              <span className="text-[8px] text-slate-500 font-bold">KM/H</span>
+      {/* 4. High-Precision Real-Time Speedometer & Telemetry Cockpit HUD (Hidden on Admin Fleet Overview) */}
+      {showCockpitHUD && (
+        <div className="absolute bottom-[10rem] sm:bottom-[11.5rem] md:bottom-5 left-2 sm:left-3 md:left-5 z-20 flex flex-col items-start gap-1.5 md:gap-2 pointer-events-auto select-none">
+          <div className="flex items-center gap-2 md:gap-3.5 bg-slate-950/85 backdrop-blur-2xl p-2 md:p-3 rounded-2xl md:rounded-3xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+            {/* Radial Circular Speedometer Gauge */}
+            <div className="relative w-11 h-11 md:w-16 md:h-16 flex items-center justify-center flex-shrink-0">
+              <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 80 80">
+                {/* Background Arc */}
+                <circle
+                  cx="40"
+                  cy="40"
+                  r="33"
+                  stroke="currentColor"
+                  strokeWidth="6"
+                  className="text-slate-800"
+                  fill="transparent"
+                  strokeDasharray="207.3"
+                  strokeDashoffset="51.8"
+                  strokeLinecap="round"
+                />
+                {/* Animated Progress Arc */}
+                <circle
+                  cx="40"
+                  cy="40"
+                  r="33"
+                  stroke={currentSpeed > 75 ? '#ef4444' : currentSpeed > 50 ? '#f59e0b' : '#10b981'}
+                  strokeWidth="6"
+                  fill="transparent"
+                  strokeLinecap="round"
+                  strokeDasharray="207.3"
+                  strokeDashoffset={207.3 - Math.min((currentSpeed / 100) * 155.5, 155.5) - 51.8}
+                  style={{ transition: 'stroke-dashoffset 0.5s ease, stroke 0.3s ease' }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className={`text-sm md:text-base font-black font-mono leading-none ${currentSpeed > 75 ? 'text-red-400' : 'text-white'}`}>
+                  {Math.round(currentSpeed)}
+                </span>
+                <span className="text-[8px] text-slate-500 font-bold">KM/H</span>
+              </div>
+            </div>
+
+            {/* Telemetry Info Stack */}
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isLive ? 'bg-emerald-400 animate-pulse' : activeBus ? 'bg-amber-400' : 'bg-slate-600'}`} />
+                <span className="text-[10px] font-black text-slate-300 uppercase tracking-wide">
+                  {isLive ? 'EN ROUTE' : activeBus ? 'PARKED' : 'STANDBY'}
+                </span>
+              </div>
+              <div className="text-xs font-black text-white">
+                {compassLabel(hudBearing)} <span className="text-slate-400 font-mono text-[10px]">{hudBearing}°</span>
+              </div>
+              <div className="text-[10px] font-bold text-slate-400">
+                {activeBus ? `${activeBus.boardedCount}/${activeBus.capacity} pax` : 'No Bus Active'}
+              </div>
             </div>
           </div>
 
-          {/* Telemetry Info Stack */}
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isLive ? 'bg-emerald-400 animate-pulse' : activeBus ? 'bg-amber-400' : 'bg-slate-600'}`} />
-              <span className="text-[10px] font-black text-slate-300 uppercase tracking-wide">
-                {isLive ? 'EN ROUTE' : activeBus ? 'PARKED' : 'STANDBY'}
-              </span>
+          {/* Journey Progress Strip — live corridor advancement */}
+          {journey && (
+            <div className="w-[180px] sm:w-[220px] md:w-[280px] bg-slate-950/85 backdrop-blur-2xl px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                  <Flag className="w-3 h-3 text-amber-400" /> Next Stop
+                </span>
+                <span className="text-[9px] font-mono font-bold text-slate-300 bg-white/10 px-1.5 py-0.5 rounded-full border border-white/10">
+                  {journey.passed + 1}/{journey.total}
+                </span>
+              </div>
+              <div className="text-[11px] font-black text-white truncate">{journey.nextStop.name}</div>
+              <div className="relative h-1.5 w-full rounded-full bg-slate-800 overflow-hidden mt-1.5">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-700"
+                  style={{ width: `${journey.pct}%` }}
+                />
+                <div className="absolute inset-0 progress-stripes" />
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[9px] text-slate-500 font-bold">{journey.remaining} stops remaining</span>
+                {isLive && activeBus && activeBus.etaMinutesUpcomingStop > 0 && (
+                  <span className="text-[9px] font-black text-amber-400">~{Math.round(activeBus.etaMinutesUpcomingStop)} min</span>
+                )}
+              </div>
             </div>
-            <div className="text-xs font-black text-white">
-              {compassLabel(hudBearing)} <span className="text-slate-400 font-mono text-[10px]">{hudBearing}°</span>
-            </div>
-            <div className="text-[10px] font-bold text-slate-400">
-              {activeBus ? `${activeBus.boardedCount}/${activeBus.capacity} pax` : 'No Bus Active'}
-            </div>
-          </div>
+          )}
         </div>
-
-        {/* Journey Progress Strip — live corridor advancement */}
-        {journey && (
-          <div className="w-[180px] sm:w-[220px] md:w-[280px] bg-slate-950/85 backdrop-blur-2xl px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Flag className="w-3 h-3 text-amber-400" /> Next Stop
-              </span>
-              <span className="text-[9px] font-mono font-bold text-slate-300 bg-white/10 px-1.5 py-0.5 rounded-full border border-white/10">
-                {journey.passed + 1}/{journey.total}
-              </span>
-            </div>
-            <div className="text-[11px] font-black text-white truncate">{journey.nextStop.name}</div>
-            <div className="relative h-1.5 w-full rounded-full bg-slate-800 overflow-hidden mt-1.5">
-              <div
-                className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-700"
-                style={{ width: `${journey.pct}%` }}
-              />
-              <div className="absolute inset-0 progress-stripes" />
-            </div>
-            <div className="flex items-center justify-between mt-1">
-              <span className="text-[9px] text-slate-500 font-bold">{journey.remaining} stops remaining</span>
-              {isLive && activeBus && activeBus.etaMinutesUpcomingStop > 0 && (
-                <span className="text-[9px] font-black text-amber-400">~{Math.round(activeBus.etaMinutesUpcomingStop)} min</span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* 5. Selected stop info popup */}
       {selectedStop && (
@@ -2219,3 +2312,11 @@ export const MapLibre3DView: React.FC<MapLibre3DViewProps> = ({
     </div>
   );
 };
+
+/**
+ * Memoized so parent re-renders (e.g. the 1 s telemetry-freshness clock in
+ * StudentView) do not re-run this component's render + effect diffing. All
+ * live map mutation happens imperatively through refs/effects on prop change.
+ */
+export const MapLibre3DView = React.memo(MapLibre3DViewInner);
+MapLibre3DView.displayName = 'MapLibre3DView';

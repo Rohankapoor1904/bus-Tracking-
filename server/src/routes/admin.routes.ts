@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
 import { authenticate, requireRole } from '../middleware/auth.middleware.js';
+import { WebSocketGateway } from '../websocket/gateway.js';
 
 export const adminRouter = Router();
 
@@ -71,6 +72,44 @@ adminRouter.post('/alerts/:id/resolve', authenticate, requireRole('ADMIN'), asyn
       return;
     }
     res.status(200).json({ success: true, message: 'Alert resolved successfully' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Drivers Management CRUD
+adminRouter.get('/drivers', authenticate, requireRole('ADMIN'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const drivers = await db.getAllDrivers();
+    res.status(200).json({ success: true, data: drivers });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+adminRouter.post('/drivers', authenticate, requireRole('ADMIN'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const saved = await db.saveDriver(req.body);
+    WebSocketGateway.getInstance()?.broadcastToAll({
+      event: 'FLEET_CONFIG_UPDATE',
+      timestamp: new Date().toISOString(),
+      data: { type: 'DRIVER_SAVED', driver: saved },
+    });
+    res.status(200).json({ success: true, data: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+adminRouter.delete('/drivers/:id', authenticate, requireRole('ADMIN'), async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+  try {
+    const success = await db.deleteDriver(req.params.id);
+    WebSocketGateway.getInstance()?.broadcastToAll({
+      event: 'FLEET_CONFIG_UPDATE',
+      timestamp: new Date().toISOString(),
+      data: { type: 'DRIVER_DELETED', driverId: req.params.id },
+    });
+    res.status(200).json({ success, message: success ? 'Driver removed' : 'Driver not found' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

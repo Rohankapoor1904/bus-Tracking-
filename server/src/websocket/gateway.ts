@@ -22,9 +22,15 @@ const ALLOWED_CHANNELS = (routeId?: string): string[] => [
 ];
 
 export class WebSocketGateway {
+  private static instance: WebSocketGateway | null = null;
   private wss: WebSocketServer;
 
+  public static getInstance(): WebSocketGateway | null {
+    return WebSocketGateway.instance;
+  }
+
   constructor(server: HttpServer) {
+    WebSocketGateway.instance = this;
     this.wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
 
     TelemetryService.setBroadcaster(this.broadcastToChannel.bind(this));
@@ -205,6 +211,24 @@ export class WebSocketGateway {
         break;
       }
 
+      case 'FLEET_CONFIG_UPDATE': {
+        this.broadcastToAll({
+          event: 'FLEET_CONFIG_UPDATE',
+          timestamp: new Date().toISOString(),
+          data: msg.payload || {},
+        });
+        break;
+      }
+
+      case 'TRIP_EVENT': {
+        this.broadcastToAll({
+          event: 'TRIP_EVENT',
+          timestamp: new Date().toISOString(),
+          data: msg.payload || {},
+        });
+        break;
+      }
+
       default:
         this.sendError(ws, `Unsupported action: ${String(msg.action)}`);
     }
@@ -223,24 +247,30 @@ export class WebSocketGateway {
     }
     const p = parsed.data;
 
-    // Coordinate bounds: reject spoofed/remote injections outside the MMU corridor.
-    const bbox = config.telemetryBBox;
-    if (
-      p.latitude < bbox.minLat ||
-      p.latitude > bbox.maxLat ||
-      p.longitude < bbox.minLng ||
-      p.longitude > bbox.maxLng
-    ) {
-      console.warn(
-        `[Telemetry] Rejected out-of-bounds ping for ${p.busId}: [${p.latitude}, ${p.longitude}]`
-      );
-      return;
+    // Coordinate bounds: reject spoofed/remote injections outside the MMU corridor in strict production only.
+    if (config.isProd) {
+      const bbox = config.telemetryBBox;
+      if (
+        p.latitude < bbox.minLat ||
+        p.latitude > bbox.maxLat ||
+        p.longitude < bbox.minLng ||
+        p.longitude > bbox.maxLng
+      ) {
+        console.warn(
+          `[Telemetry] Rejected out-of-bounds ping for ${p.busId}: [${p.latitude}, ${p.longitude}]`
+        );
+        this.sendError(
+          ws,
+          `Location outside MMU corridor (${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}) — bus only goes live inside Ambala–Mullana bounds.`
+        );
+        return;
+      }
     }
 
-    // Drivers may only broadcast for a bus they are assigned to.
-    if (ws.userRole === 'DRIVER') {
+    // Drivers may only broadcast for a bus they are assigned to (in production). In dev or global session, allow.
+    if (config.isProd && ws.userRole === 'DRIVER' && !ws.userId?.includes('global')) {
       const user = ws.userId ? await db.getUserById(ws.userId) : null;
-      if (!user?.assignedBusId || user.assignedBusId !== p.busId) {
+      if (user?.assignedBusId && user.assignedBusId !== p.busId) {
         this.sendError(ws, 'Not authorized to broadcast for this vehicle');
         return;
       }
@@ -288,6 +318,20 @@ export class WebSocketGateway {
     // Fan out to other app-server instances (no-op when Redis is disabled).
     redis.publish(channel, raw).catch(() => undefined);
     return deliveredLocally;
+  }
+
+  public broadcastToAll(message: WSOutboundMessage) {
+    const raw = JSON.stringify(message);
+    this.wss.clients.forEach((client) => {
+      const extWs = client as ExtendedWebSocket;
+      if (extWs.readyState === WebSocket.OPEN) {
+        try {
+          extWs.send(raw);
+        } catch {
+          /* client socket error */
+        }
+      }
+    });
   }
 
   private sendToClient(ws: WebSocket, message: WSOutboundMessage) {

@@ -24,6 +24,7 @@ interface HeaderProps {
   onOpenLogin: () => void;
   onLogout: () => void;
   isSocketConnected: boolean;
+  onOpenServerConfig?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -32,15 +33,16 @@ export const Header: React.FC<HeaderProps> = ({
   onChangeRoleView,
   onOpenLogin,
   isSocketConnected,
+  onOpenServerConfig,
 }) => {
-  const canSwitchRoles = true;
+  const canSwitchRoles = currentUser?.isGlobalAccess === true || currentUser?.role === 'ADMIN';
   const isStudent = activeRoleView === 'STUDENT';
   const isDriver = activeRoleView === 'DRIVER';
   const isAdmin = activeRoleView === 'ADMIN';
   const istTime = useIstClock();
 
   return (
-    <header className="w-full bg-slate-950/92 backdrop-blur-2xl border-b border-white/10 px-2 sm:px-3 md:px-6 py-2 md:py-3.5 flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
+    <header className="w-full bg-slate-950/92 backdrop-blur-2xl border-b border-white/10 px-2 sm:px-3 md:px-6 py-2 md:py-3.5 pt-safe flex items-center justify-between z-30 select-none flex-shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
       {/* 1. Left Institutional Logo & Identity */}
       <div className="flex items-center gap-2 md:gap-3.5">
         <div className="relative flex items-center">
@@ -115,6 +117,13 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-slate-500">•</span>
             <span className="text-amber-400 font-mono text-[11px]">Route AMB-01 (Ambala - Mullana)</span>
           </div>
+        ) : isAdmin ? (
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-xs font-bold text-slate-300 shadow-inner">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-white font-extrabold">Fleet Command</span>
+            <span className="text-slate-500">•</span>
+            <span className="text-emerald-400 font-mono text-[11px]">Central Operations</span>
+          </div>
         ) : (
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/40 border border-amber-600/40 text-xs font-bold text-amber-300">
             <Navigation className="w-3.5 h-3.5 text-amber-400 animate-spin" />
@@ -134,19 +143,20 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="text-slate-500 font-sans text-[9px]">IST</span>
         </div>
 
-        {/* Live WebSocket Telemetry Heartbeat Pill */}
-        <div
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold border backdrop-blur-md transition-colors ${
+        {/* Live WebSocket Telemetry Heartbeat Pill / Tap to Open Server Config */}
+        <button
+          onClick={onOpenServerConfig}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold border backdrop-blur-md transition-all cursor-pointer active:scale-95 ${
             isSocketConnected
-              ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-              : 'bg-red-950/60 text-red-400 border-red-500/40'
+              ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+              : 'bg-red-950/60 hover:bg-red-900/80 text-red-400 border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.2)]'
           }`}
-          title={isSocketConnected ? 'Connected to MMU 2.4GHz Telemetry Gateway' : 'Connecting to Telemetry...'}
+          title={isSocketConnected ? 'Connected to MMU Telemetry Gateway. Tap to view server settings.' : 'App Offline. Tap to configure server IP & reconnect.'}
         >
           <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${isSocketConnected ? 'bg-emerald-400 animate-ping' : 'bg-red-400'}`} />
           <Radio className="w-3 h-3" />
-          <span className="hidden xs:inline">{isSocketConnected ? 'LIVE GPS' : 'CONNECTING'}</span>
-        </div>
+          <span className="hidden xs:inline">{isSocketConnected ? 'LIVE GPS' : 'OFFLINE (TAP)'}</span>
+        </button>
 
         {currentUser ? (
           <div className="flex items-center gap-2">
