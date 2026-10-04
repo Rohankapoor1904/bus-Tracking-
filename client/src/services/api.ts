@@ -19,6 +19,11 @@ export function getServerHost(): string {
     // Default to dev PC IP address over Wi-Fi when running native Android APK
     return '192.168.1.12:4000';
   }
+  // Single-origin deployments (reverse proxy serves both the SPA and the API)
+  // talk to whatever host/port the page itself was loaded from.
+  if (import.meta.env.VITE_SAME_ORIGIN === 'true') {
+    return window.location.host;
+  }
   const host = window.location.hostname || 'localhost';
   const port = (import.meta.env.VITE_SERVER_PORT as string | undefined) || '4000';
   return `${host}:${port}`;

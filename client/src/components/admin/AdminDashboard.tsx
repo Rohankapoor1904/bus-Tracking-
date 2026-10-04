@@ -14,24 +14,12 @@ import {
   ChevronUp,
   ChevronDown,
 } from 'lucide-react';
-
-// Telemetry health states: LIVE (fresh + moving), PARKED (fresh, stationary),
-// STALE (no packet for 15-120s), OFFLINE (never reported or silent > 120s).
-type TelemetryHealth = 'LIVE' | 'STALE' | 'PARKED' | 'OFFLINE';
-
-const HEALTH_DOT: Record<TelemetryHealth, string> = {
-  LIVE: 'bg-emerald-400 animate-pulse',
-  PARKED: 'bg-sky-400',
-  STALE: 'bg-amber-400',
-  OFFLINE: 'bg-slate-500',
-};
-
-const HEALTH_CHIP: Record<TelemetryHealth, string> = {
-  LIVE: 'bg-emerald-950 text-emerald-400 border-emerald-800',
-  PARKED: 'bg-sky-950 text-sky-400 border-sky-800',
-  STALE: 'bg-amber-950 text-amber-400 border-amber-800',
-  OFFLINE: 'bg-slate-800 text-slate-400 border-slate-700',
-};
+import {
+  getTelemetryHealth,
+  HEALTH_CHIP,
+  HEALTH_DOT,
+  TelemetryHealth,
+} from '../../utils/telemetryHealth.js';
 
 // Mobile collapsible bottom sheet for fleet list in Radar view
 interface MobileFleetSheetProps {
@@ -233,16 +221,9 @@ export const AdminDashboard: React.FC = () => {
 
   // Telemetry health: fresh (< 15s) + moving = LIVE; fresh but stationary =
   // PARKED (GPS on, bus stopped); silent 15-120s = STALE; never reported or
-  // silent > 120s = OFFLINE. This keeps "GPS on but parked" distinct from
-  // "tracker offline", which matters for driver/student safety.
-  const telemetryHealth = (bus: LiveBusState): TelemetryHealth => {
-    if (bus.hasFix === false || !bus.lastPing) return 'OFFLINE';
-    const ageMs = nowTick - new Date(bus.lastPing).getTime();
-    if (Number.isNaN(ageMs)) return 'OFFLINE';
-    if (ageMs >= 120000) return 'OFFLINE';
-    if (ageMs >= 15000) return 'STALE';
-    return bus.speedKmh > 1 ? 'LIVE' : 'PARKED';
-  };
+  // silent > 120s = OFFLINE.
+  const telemetryHealth = (bus: LiveBusState): TelemetryHealth =>
+    getTelemetryHealth(bus, nowTick);
 
   return (
     <div className="w-full h-full bg-slate-950 text-slate-100 flex flex-col overflow-hidden pb-16 md:pb-0">

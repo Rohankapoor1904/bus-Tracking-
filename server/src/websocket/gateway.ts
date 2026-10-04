@@ -14,6 +14,8 @@ interface ExtendedWebSocket extends WebSocket {
   userRole?: UserRole;
   authenticated: boolean;
   subscriptions: Set<string>;
+  telemetryWindowStart: number;
+  telemetryWindowCount: number;
 }
 
 const ALLOWED_CHANNELS = (routeId?: string): string[] => [
@@ -46,6 +48,8 @@ export class WebSocketGateway {
       extWs.isAlive = true;
       extWs.authenticated = false;
       extWs.subscriptions = new Set();
+      extWs.telemetryWindowStart = Date.now();
+      extWs.telemetryWindowCount = 0;
 
       try {
         const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
@@ -214,6 +218,18 @@ export class WebSocketGateway {
     if (ws.userRole !== 'DRIVER' && ws.userRole !== 'ADMIN') {
       this.sendError(ws, 'Authentication required to publish telemetry');
       return;
+    }
+
+    // Throttle ingestion per socket to the configured rate (default 2 Hz) plus
+    // a small burst allowance, so a misbehaving client cannot flood the feed.
+    const now = Date.now();
+    if (now - ws.telemetryWindowStart >= 1000) {
+      ws.telemetryWindowStart = now;
+      ws.telemetryWindowCount = 0;
+    }
+    ws.telemetryWindowCount++;
+    if (ws.telemetryWindowCount > config.telemetryIngestionRateHz + 2) {
+      return; // silently drop the excess frame
     }
 
     const parsed = telemetryPayloadSchema.safeParse(payload);

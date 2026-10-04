@@ -91,8 +91,36 @@ npm run test
 - **Telemetry is authenticated, role-scoped and validated.** Drivers may only broadcast for their assigned vehicle; coordinates are bounded to the MMU corridor and speed is capped before alerts/broadcasts.
 - **Secrets are environment-driven.** `JWT_SECRET` has no hardcoded fallback in production, and `CORS_ORIGIN` must be an explicit allowlist.
 - **Demo personas are disabled by default in production** (`ENABLE_DEMO_ACCOUNTS=false`), so the shared demo password and `/auth/demo-accounts` endpoint are not exposed.
-- **Transport protections:** `helmet`, request size limits, and login rate limiting.
+- **Transport protections:** `helmet`, request size limits, login rate limiting, a global API rate limit, and an optional `trust proxy` setting so throttling keys on the real client IP behind nginx/a load balancer.
+- **Telemetry ingestion is throttled** per WebSocket to the configured rate (`TELEMETRY_INGESTION_HZ`, default 2 Hz + a small burst), so a misbehaving client cannot flood the feed.
 - **Data persistence:** all fleet state lives in PostgreSQL + PostGIS, so it survives restarts and supports horizontal scaling; Redis (optional) provides a latest-position cache and cross-instance WebSocket fan-out.
+
+### Container deployment (single-origin)
+
+The repo ships production Dockerfiles and a compose stack that serves the SPA
+and proxies `/api` + `/ws` to the backend on one origin (TLS terminates at your
+ingress/reverse proxy):
+
+```bash
+cp .env.example .env
+# set a strong JWT_SECRET (>= 32 chars) and, if cross-origin, CORS_ORIGIN
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"   # → JWT_SECRET
+
+# Build images and start the full stack (PostGIS + Redis + API + SPA):
+docker compose up -d --build
+# SPA:  http://localhost:8080   API/WS: proxied on the same origin
+```
+
+For a split deployment (API on a different origin) build the SPA with
+`VITE_SERVER_URL=https://api.example.org` instead of the default same-origin
+mode; see `client/.env.example`.
+
+**Production checklist**
+- Set `JWT_SECRET` (no default in production — the server refuses to boot without it).
+- Set `CORS_ORIGIN` to your exact browser origin(s); blank means same-origin only.
+- Set `TRUST_PROXY` to the number of proxy hops (e.g. `1`) so rate limits are per-client.
+- Keep `ENABLE_DEMO_ACCOUNTS=false` and change the demo password if you enable staging demos.
+- Terminate TLS at the proxy and forward `Upgrade`/`Connection` for `/ws` (see `client/nginx.conf`).
 
 
 ---

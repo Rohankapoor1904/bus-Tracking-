@@ -24,6 +24,15 @@ Client (run from `client/`):
 - `npm run dev` — Vite dev server (default 5173)
 - `npx tsc -b --noEmit` — typecheck
 - `npm run build` — production bundle
+- `npm test` — vitest unit tests (e.g. telemetry health thresholds)
+
+## Container / deployment
+
+- `docker compose up -d --build` builds `server/Dockerfile` + `client/Dockerfile`
+  (build context = repo root) and serves the SPA on `:8080` with nginx proxying
+  `/api` + `/ws` to the backend (single origin).
+- `docker compose up -d postgres redis` is enough for local dev against the API.
+- Root `.env` (from `.env.example`) supplies `JWT_SECRET` to compose.
 
 ## Conventions / gotchas
 

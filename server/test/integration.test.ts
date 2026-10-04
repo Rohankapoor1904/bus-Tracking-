@@ -171,6 +171,28 @@ async function run() {
     ok(`Authenticated telemetry broadcast with speed cap (${update.data.speedKmh} km/h)`);
   }
 
+  // 9b. Per-socket telemetry ingestion throttle drops excess frames
+  {
+    const ws = await openSocket(`${WS_URL}?token=${encodeURIComponent(driver.token)}&routeId=route-amb-01`);
+    const seen: number[] = [];
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.event === 'BUS_POSITION_UPDATE') seen.push(m.data.speedKmh);
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    // 10 frames in one second; config allows 2 Hz + 2 burst = 4, so only 4 pass.
+    for (let i = 0; i < 10; i++) {
+      ws.send(JSON.stringify({
+        action: 'TELEMETRY_PING',
+        payload: { tripId, busId: 'bus-01', routeId: 'route-amb-01', latitude: 30.30, longitude: 76.90, speed: 40, bearing: 120 },
+      }));
+    }
+    await new Promise((r) => setTimeout(r, 700));
+    ws.close();
+    assert.ok(seen.length > 0 && seen.length <= 4, `expected 1-4 accepted frames, got ${seen.length}`);
+    ok(`Telemetry ingestion throttled to ~${seen.length} frames/s (config cap)`);
+  }
+
   // 10. Admin-only endpoint rejects a student token
   const studentAdmin = await api('/api/v1/admin/fleet-overview', {
     headers: { Authorization: `Bearer ${student.token}` },

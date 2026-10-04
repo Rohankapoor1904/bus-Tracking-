@@ -37,9 +37,15 @@ export const config = {
   databaseUrl: required('DATABASE_URL', 'postgres://mmu:mmu_secret@127.0.0.1:5432/mmu_fleet'),
   redisUrl: process.env.REDIS_URL || '',
   corsOrigin: process.env.CORS_ORIGIN || '',
+  /**
+   * Express `trust proxy` setting. Set to the number of trusted proxy hops
+   * (e.g. `1` behind a single nginx/cloud LB) so `req.ip` and the rate limiter
+   * key on the real client address. Left disabled by default.
+   */
+  trustProxy: process.env.TRUST_PROXY ? (isNaN(Number(process.env.TRUST_PROXY)) ? process.env.TRUST_PROXY : Number(process.env.TRUST_PROXY)) : false,
   geofenceRadiusMeters: parseInt(process.env.GEOFENCE_RADIUS_METERS || '1000', 10),
   speedLimitKmh: parseFloat(process.env.SPEED_LIMIT_KMH || '75.0'),
-  telemetryIngestionRateHz: 2,
+  telemetryIngestionRateHz: parseFloat(process.env.TELEMETRY_INGESTION_HZ || '2'),
   maxTelemetrySpeedKmh: parseFloat(process.env.MAX_TELEMETRY_SPEED_KMH || '160'),
   telemetryBBox: {
     minLat: parseFloat(process.env.TELEMETRY_MIN_LAT || '29.8'),

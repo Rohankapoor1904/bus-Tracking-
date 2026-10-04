@@ -23,6 +23,10 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 
+// Behind a reverse proxy (nginx/cloud LB) this makes req.ip and the rate
+// limiter see the real client address instead of the proxy's.
+app.set('trust proxy', config.trustProxy);
+
 app.use(helmet());
 
 const corsOrigins = config.corsOrigin
@@ -37,6 +41,17 @@ app.use(
 );
 
 app.use(express.json({ limit: '256kb' }));
+
+// Baseline throttle for the whole API to blunt scraping / abuse. The stricter
+// auth limiter below is layered on top of this for login attempts.
+const apiLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests. Please try again shortly.' },
+});
+app.use('/api/', apiLimiter);
 
 // Throttle authentication attempts to blunt credential stuffing.
 const authLimiter = rateLimit({
