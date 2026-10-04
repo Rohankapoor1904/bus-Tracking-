@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+@theme {
+  /* Extra-small breakpoint used for compact-device KPI subtitles/status labels. */
+  --breakpoint-xs: 30rem;
+}
+
 @layer base {
   :root {
     --mmu-primary-red: #E21E26;

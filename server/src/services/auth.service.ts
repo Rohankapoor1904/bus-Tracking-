@@ -44,7 +44,7 @@ export class AuthService {
     };
 
     const token = jwt.sign(payload, config.jwtSecret, {
-      expiresIn: '24h',
+      expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn'],
     });
 
     const sanitizedUser = { ...user };

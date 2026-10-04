@@ -16,9 +16,13 @@ studentRouter.get('/allocation', authenticate, async (req: AuthenticatedRequest,
 
     const allocation = await db.getAllocationByStudentId(studentId);
     if (!allocation) {
-      // Fallback for demo users: assign to route-amb-01 if unallocated
-      const defaultAllocation = (await db.getAllocationsByRouteId('route-amb-01'))[0];
-      res.status(200).json({ success: true, data: defaultAllocation });
+      if (config.enableDemoAccounts) {
+        // Development convenience: show an example allocation for unallocated demos.
+        const defaultAllocation = (await db.getAllocationsByRouteId('route-amb-01'))[0];
+        res.status(200).json({ success: true, data: defaultAllocation });
+        return;
+      }
+      res.status(404).json({ success: false, error: 'No active bus allocation found for this student' });
       return;
     }
 
@@ -55,7 +59,10 @@ studentRouter.get('/allocation', authenticate, async (req: AuthenticatedRequest,
         liveTracking: {
           isTripActive: !!activeTrip,
           tripId: activeTrip?.id,
-          currentCoordinates: telemetry ? [telemetry.longitude, telemetry.latitude] : [76.83756, 30.33268],
+          // Null when the bus has no GPS fix; the client renders "no live fix"
+          // rather than a fabricated campus coordinate.
+          currentCoordinates: telemetry ? [telemetry.longitude, telemetry.latitude] : null,
+          hasFix: !!telemetry,
           // Parked contract: no active trip => zero motion, static terminal fix.
           speedKmh: activeTrip ? telemetry?.speedKmh || 0 : 0,
           bearing: telemetry?.bearing || 0,

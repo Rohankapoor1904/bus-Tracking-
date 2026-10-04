@@ -54,13 +54,15 @@ export interface LiveBusState {
   routeId?: string;
   routeName?: string;
   tripId?: string;
-  latitude: number;
-  longitude: number;
+  // Null until the bus reports a GPS fix — never a fabricated position.
+  latitude: number | null;
+  longitude: number | null;
   speedKmh: number;
   bearing: number;
-  altitudeM: number;
-  accuracyM: number;
-  lastPing: string;
+  altitudeM: number | null;
+  accuracyM: number | null;
+  lastPing: string | null;
+  hasFix?: boolean;
   upcomingStopName: string;
   distanceToNextStopMeters: number;
   etaMinutesUpcomingStop: number;
@@ -91,7 +93,8 @@ export interface StudentAllocationResponse {
   liveTracking: {
     isTripActive: boolean;
     tripId?: string;
-    currentCoordinates: [number, number]; // [lon, lat]
+    currentCoordinates: [number, number] | null; // [lon, lat] — null when no GPS fix
+    hasFix?: boolean;
     speedKmh: number;
     bearing: number;
     distanceToStopMeters: number;

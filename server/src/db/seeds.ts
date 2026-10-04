@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { User, Bus, Route, RouteStop, StudentAllocation } from '../types/index.js';
+import { config } from '../config/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,8 +17,8 @@ try {
   /* fallback */
 }
 
-// Pre-hashed password for demo accounts ("MMU@Secure2026")
-const DEFAULT_HASH = bcrypt.hashSync('MMU@Secure2026', 10);
+// Pre-hashed password for demo accounts (configurable; dev default only).
+const DEFAULT_HASH = bcrypt.hashSync(config.demoPassword, 10);
 
 export const SEED_USERS: User[] = [
   {
