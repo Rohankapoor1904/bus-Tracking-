@@ -1,11 +1,41 @@
-# MMU FleetRadar 3D — Maharishi Markandeshwar University Real-Time Bus Tracking System
+<div align="center">
 
-[![System Status](https://img.shields.io/badge/System-Production%20Ready-emerald.svg)]()
-[![PostGIS Spatial](https://img.shields.io/badge/Geospatial-PostGIS%20%2F%20SRID%204326-blue.svg)]()
-[![Telemetry Stream](https://img.shields.io/badge/Ingestion-1--2%20Hz%20WebSocket-red.svg)]()
-[![3D Viewport](https://img.shields.io/badge/3D%20Engine-MapLibre%20GL%20JS-purple.svg)]()
+  <a href="https://github.com/Rohankapoor1904/bus-Tracking-">
+    <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=226,30,38&height=220&section=header&text=🚍%20MMU%20FleetRadar%203D&fontSize=42&fontColor=ffffff&animation=fadeIn&fontAlignY=38" alt="MMU FleetRadar Banner" width="100%"/>
+  </a>
 
-Production-grade real-time 3D geospatial bus tracking, high-frequency telemetry streaming, and automated student manifest management system built specifically for **Maharishi Markandeshwar University (MMU Mullana & Sadopur campuses)**.
+  <p align="center">
+    <b>Real-Time 3D Geospatial Transit Radar, Telemetry Streaming & Manifest System</b>
+  </p>
+
+  <p align="center">
+    <a href="https://github.com/Rohankapoor1904/bus-Tracking-">
+      <img src="https://img.shields.io/badge/System-Production%20Ready-emerald.svg?style=for-the-badge" alt="System Production Ready" />
+    </a>
+    <img src="https://img.shields.io/badge/Geospatial-PostGIS%20%2F%20SRID%204326-blue.svg?style=for-the-badge" alt="PostGIS SRID 4326" />
+    <img src="https://img.shields.io/badge/Telemetry-1--2%20Hz%20WebSocket-red.svg?style=for-the-badge" alt="1-2 Hz WebSocket" />
+    <img src="https://img.shields.io/badge/3D%20Engine-MapLibre%20GL%20JS-purple.svg?style=for-the-badge" alt="MapLibre GL JS" />
+    <img src="https://img.shields.io/badge/Mobile-Android%20APK-3DDC84.svg?style=for-the-badge&logo=android&logoColor=white" alt="Android APK" />
+  </p>
+
+  <p align="center">
+    <a href="#-institutional-identity">Campus Context</a> •
+    <a href="#-quick-start-guide">Quick Start</a> •
+    <a href="#-production-hardening">Production Hardening</a> •
+    <a href="#-demo-personas--instant-switcher">Demo Switcher</a> •
+    <a href="#-architecture--system-capabilities">Architecture</a> •
+    <a href="#-repository-structure">Repository Structure</a>
+  </p>
+
+</div>
+
+---
+
+## 📖 Overview
+
+**MMU FleetRadar 3D** is a production-grade real-time 3D geospatial bus tracking, high-frequency telemetry streaming, and automated student manifest management system engineered specifically for **Maharishi Markandeshwar University (MMU Mullana & Sadopur campuses)**.
+
+The system combines high-frequency (1–2 Hz) WebSocket telemetry ingestion, smooth 60 FPS client-side lerp/slerp interpolation, photorealistic campus volumetric 3D extrusions, driver manifest check-ins, and admin safety monitors.
 
 ---
 
@@ -19,7 +49,6 @@ Production-grade real-time 3D geospatial bus tracking, high-frequency telemetry 
   - Primary Brand Crimson: `#E21E26`
   - Academic Deep Navy: `#0D1B3E`
   - Heraldic Amber Gold: `#F59E0B` / `#FBBF24`
-- **Official Helpline:** +91-1731-274475 (Fleet Dispatch) | Toll-Free: 1800 2740 240
 - **Regional Corridors Grounded:**
   1. `ROUTE-AMB-01`: Ambala Cantt Railway Station ➔ MMU Mullana Campus Terminal
   2. `ROUTE-YNR-02`: Yamunanagar Workshop Chowk ➔ Jagadhri ➔ MMU Mullana Hospital Bay
@@ -30,58 +59,52 @@ Production-grade real-time 3D geospatial bus tracking, high-frequency telemetry 
 
 ## 🚀 Quick Start Guide
 
-### 1. Start PostgreSQL (PostGIS) & Redis
+### 1. Clone the Repository
+```bash
+git clone https://github.com/Rohankapoor1904/bus-Tracking-.git
+cd bus-Tracking-
+```
+
+### 2. Start PostgreSQL (PostGIS) & Redis
 ```bash
 # From repo root — starts PostGIS + Redis with persistent volumes:
 docker compose up -d
 ```
 
-### 2. Configure the Backend Environment
+### 3. Configure the Backend Environment
 ```bash
 cp server/.env.example server/.env
-# then edit server/.env — set DATABASE_URL, REDIS_URL and a strong JWT_SECRET
+# Edit server/.env — set DATABASE_URL, REDIS_URL and a strong JWT_SECRET
 ```
 Generate a production secret with:
 ```bash
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-### 3. Install Dependencies
+### 4. Install Dependencies
 ```bash
-# From workspace root:
 npm run install:all
 ```
 
-### 4. Start Backend & Frontend Simultaneously
+### 5. Start Backend & 3D Frontend
 ```bash
 # Starts both Backend (Port 4000) and 3D Frontend (Port 5173):
 npm run dev
 ```
-On first boot the server applies the PostGIS schema (`server/src/db/schema.sql`)
-and seeds the grounded MMU reference data (routes, stops, fleet, demo personas).
 
-#### Map Basemap Provider (optional)
-The 3D viewport defaults to **OpenFreeMap** vector tiles — free, key-free and
-production-ready for a single campus. To use **Ola Maps** (India-tuned vector +
-satellite styles), create `client/.env`:
-```bash
-VITE_MAP_PROVIDER=ola
-VITE_OLA_MAPS_API_KEY=your_ola_maps_api_key
-```
-If Ola is selected without a key the app falls back to OpenFreeMap. The
-undocumented `mt{0-3}.google.com/vt` raster endpoints are intentionally not used
-(they are unsupported and violate Google's Terms of Service).
-
-### 5. Open in Browser
+### 6. Open in Browser
 - **Frontend App:** [http://localhost:5173/](http://localhost:5173/)
 - **Backend API:** [http://localhost:4000/api/v1](http://localhost:4000/api/v1)
 - **Health Check:** [http://localhost:4000/health](http://localhost:4000/health)
 - **WebSocket Gateway:** `ws://localhost:4000/ws`
 
-### 6. Run Automated Test Suite
+### 7. Run Automated Test Suite
 ```bash
 npm run test
 ```
+
+### 8. Companion Mobile APK
+A pre-compiled native Android package is included in the root directory: `MMU_FleetRadar_3D.apk`.
 
 ---
 
@@ -90,10 +113,9 @@ npm run test
 - **Authentication is enforced on every mutating path.** REST endpoints use JWT + RBAC, and the WebSocket gateway rejects `TELEMETRY_PING`, `EMERGENCY_SOS` and `ATTENDANCE_UPDATE` from unauthenticated or unauthorized clients.
 - **Telemetry is authenticated, role-scoped and validated.** Drivers may only broadcast for their assigned vehicle; coordinates are bounded to the MMU corridor and speed is capped before alerts/broadcasts.
 - **Secrets are environment-driven.** `JWT_SECRET` has no hardcoded fallback in production, and `CORS_ORIGIN` must be an explicit allowlist.
-- **Demo personas are disabled by default in production** (`ENABLE_DEMO_ACCOUNTS=false`), so the shared demo password and `/auth/demo-accounts` endpoint are not exposed.
+- **Demo personas are disabled by default in production** (`ENABLE_DEMO_ACCOUNTS=false`), so shared demo passwords and `/auth/demo-accounts` are never exposed in production.
 - **Transport protections:** `helmet`, request size limits, and login rate limiting.
-- **Data persistence:** all fleet state lives in PostgreSQL + PostGIS, so it survives restarts and supports horizontal scaling; Redis (optional) provides a latest-position cache and cross-instance WebSocket fan-out.
-
+- **Data persistence:** All fleet state lives in PostgreSQL + PostGIS, ensuring persistence across restarts; optional Redis provides latest-position caching and multi-instance WebSocket fan-out.
 
 ---
 
@@ -113,10 +135,26 @@ The application includes an instant **1-Click Persona Switcher** in the navigati
 
 ## 🎯 Architecture & System Capabilities
 
+```mermaid
+graph TD
+    Driver[Driver Cockpit: Geolocation Watch] -->|1-2 Hz WebSocket| Gateway[Express & WebSocket Server :4000]
+    Gateway --> PostGIS[(PostGIS Spatial Store)]
+    Gateway --> Broadcast[WebSocket Broadcast Hub]
+    
+    Broadcast --> Student[Student 3D Viewport: MapLibre GL JS]
+    Broadcast --> Admin[Central Logistics Admin Radar]
+    
+    Student --> Lerp[60 FPS Lerp & Slerp Interpolation Engine]
+    Student --> Geofence[1km Distance Audio Chime & Banner]
+    
+    Admin --> Safety[Over-speeding & SOS Alarm Monitor]
+    Admin --> Manifest[Stop-wise Student Boarding Analytics]
+```
+
 ### 1. Student 3D Experience
-- **Photorealistic 3D Buildings:** Real MMU campus blocks rendered with volumetric extrusions (`fill-extrusion`) based on actual building heights (Teaching Hospital 28m, Cardiac Pavilion 24m, Engineering Complex 20m, Hostels 22m, Admin Block 18m).
+- **Photorealistic 3D Buildings:** Real MMU campus blocks rendered with volumetric extrusions (`fill-extrusion`) based on actual building heights.
 - **Dynamic 55° Pitch & Heading Follow:** Tilts along the vehicle's direction of travel for an authentic 3D driving perspective.
-- **60 FPS Lerp & Slerp Interpolation:** GPS packets arriving at 1-2 Hz are smoothed using a client-side linear and spherical shortest-arc engine for stutter-free vehicle movement.
+- **60 FPS Lerp & Slerp Interpolation:** GPS packets arriving at 1-2 Hz are smoothed using client-side linear and spherical shortest-arc engines.
 - **1 km Geofence Push Alert:** Triggers visual notification banner and harmonic Web Audio API chime when the bus enters the 1000m perimeter of the student's stop.
 
 ### 2. Driver Transit Terminal
@@ -125,7 +163,6 @@ The application includes an instant **1-Click Persona Switcher** in the navigati
 - **Screen Wake-Lock API:** Keeps the mobile device display active without timing out.
 - **Offline Telemetry Queue:** Spools points locally when crossing cellular dead zones and automatically flushes on reconnect.
 - **Stop-Wise Manifest Console:** Displays scheduled stops with assigned student rosters; one-tap check-in toggles (`Boarded` / `Absent`).
-- **Emergency SOS Beacon:** Critical alarm broadcast directly to the Admin Fleet Radar.
 
 ### 3. Central Logistics Admin Fleet Radar
 - **3D Multi-Bus Canvas:** Tracks all active vehicles simultaneously with live speeds and heading vectors.
@@ -138,35 +175,24 @@ The application includes an instant **1-Click Persona Switcher** in the navigati
 ## 📁 Repository Structure
 
 ```
-├── assets/
-│   └── branding/              # Official MMU raster and vector logo assets
-│       ├── mmu_logo.png       # Archive.org official crest PNG
-│       └── mmu_logo.svg       # Resolution-independent SVG logo
-├── docs/                      # Production specifications & data architectures
-│   ├── RESEARCH.md            # Grounded MMU institutional & geospatial research
-│   ├── ARCHITECTURE.md        # Telemetry ingestion & geospatial pipelines
-│   ├── DATABASE_SCHEMA.sql    # PostgreSQL 15 + PostGIS DDL schema
-│   ├── API_CONTRACT.md        # REST & WebSocket telemetry payloads
-│   ├── MAPBOX_3D_INTEGRATION.md # 3D vector extrusions & 60fps lerp guide
-│   └── TASKS.md               # Master checklist of completed build items
-├── server/                    # Node.js + TypeScript Fastify/Express + WS Backend
-│   ├── src/
-│   │   ├── config/            # Environment settings
-│   │   ├── db/                # PostGIS spatial engine, database manager & seeds
-│   │   ├── middleware/        # JWT & RBAC authorization
-│   │   ├── routes/            # REST endpoint routers (Auth, Fleet, Trips, etc.)
-│   │   ├── services/          # Telemetry ingestion, auth & spatial evaluator
-│   │   ├── types/             # Central TypeScript definitions
-│   │   └── websocket/         # 1-2 Hz WebSocket Telemetry Gateway
-│   └── test/                  # Automated integration verification test suite
-└── client/                    # Vite + React + MapLibre GL 3D Frontend
-    ├── public/branding/       # Copied institutional assets
-    └── src/
-        ├── components/
-        │   ├── 3d/            # MapLibre 3D Viewport & 60fps Lerp Engine
-        │   ├── admin/         # Fleet Radar 3D Command Center
-        │   ├── common/        # Header & Persona Switcher
-        │   ├── driver/        # High-contrast cockpit & manifest console
-        │   └── student/       # 3D tracking cockpit & digital bus pass
-        └── services/          # Typed API, WebSocket & Web Audio alert clients
+bus-Tracking-/
+├── assets/                  # Branding and vector assets
+├── client/                  # Vite + React + MapLibre GL JS 3D frontend
+├── server/                  # Node.js, Express, WebSocket & PostGIS telemetry engine
+├── docs/                    # Technical specs & architecture documentation
+├── MMU_FleetRadar_3D.apk    # Native Android companion APK
+├── package.json             # Root workspace orchestrator
+└── README.md                # System documentation
 ```
+
+---
+
+## 📜 License
+
+Distributed under the MIT License.
+
+---
+
+<div align="center">
+  <sub>Developed with ❤️ by <a href="https://github.com/Rohankapoor1904">Rohan Kapoor</a></sub>
+</div>
