@@ -30,8 +30,8 @@ tripsRouter.post(
         return;
       }
 
-      // A driver may only start a trip for their own assigned vehicle in strict prod.
-      if (config.isProd && req.user?.role === 'DRIVER' && req.user.userId && !req.user.userId.includes('global')) {
+      // A driver may only start a trip for their own assigned vehicle.
+      if (req.user?.role === 'DRIVER' && req.user.userId && !req.user.userId.includes('global')) {
         const user = await db.getUserById(req.user.userId);
         if (user?.assignedBusId && user.assignedBusId !== parsed.data.busId) {
           res.status(403).json({ success: false, error: 'Not authorized to operate this vehicle' });
@@ -42,7 +42,7 @@ tripsRouter.post(
       const existing = await db.getActiveTripByBusId(parsed.data.busId);
       if (existing) {
         // Reuse or refresh active trip so user is never locked out
-        await db.updateBus(parsed.data.busId, { status: 'EN_ROUTE', routeId: parsed.data.routeId });
+        await db.updateBus(parsed.data.busId, { status: 'EN_ROUTE', defaultRouteId: parsed.data.routeId });
         WebSocketGateway.getInstance()?.broadcastToAll({
           event: 'TRIP_STARTED',
           timestamp: new Date().toISOString(),
@@ -60,7 +60,7 @@ tripsRouter.post(
         startOdometerKm: parsed.data.startOdometerKm,
       });
 
-      await db.updateBus(parsed.data.busId, { status: 'EN_ROUTE', routeId: parsed.data.routeId });
+      await db.updateBus(parsed.data.busId, { status: 'EN_ROUTE', defaultRouteId: parsed.data.routeId });
 
       WebSocketGateway.getInstance()?.broadcastToAll({
         event: 'TRIP_STARTED',
@@ -93,7 +93,7 @@ tripsRouter.post(
         return;
       }
 
-      if (config.isProd && req.user?.role === 'DRIVER' && existing.driverId !== req.user.userId && !req.user.userId.includes('global')) {
+      if (req.user?.role === 'DRIVER' && existing.driverId !== req.user.userId && !req.user.userId.includes('global')) {
         res.status(403).json({ success: false, error: 'Not authorized to end this trip' });
         return;
       }

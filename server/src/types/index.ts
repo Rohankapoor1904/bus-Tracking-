@@ -185,7 +185,9 @@ export type WSActionType =
   | 'UNSUBSCRIBE'
   | 'TELEMETRY_PING'
   | 'ATTENDANCE_UPDATE'
-  | 'EMERGENCY_SOS';
+  | 'EMERGENCY_SOS'
+  | 'FLEET_CONFIG_UPDATE'
+  | 'TRIP_EVENT';
 
 export interface WSInboundMessage {
   action: WSActionType;
@@ -202,7 +204,11 @@ export type WSEventType =
   | 'ATTENDANCE_CHANGED'
   | 'EMERGENCY_ALERT'
   | 'TRIP_STATE_CHANGED'
-  | 'ERROR';
+  | 'ERROR'
+  | 'FLEET_CONFIG_UPDATE'
+  | 'TRIP_EVENT'
+  | 'TRIP_STARTED'
+  | 'TRIP_ENDED';
 
 export interface WSOutboundMessage {
   event: WSEventType;

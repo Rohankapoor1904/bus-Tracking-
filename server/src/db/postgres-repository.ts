@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
 import type pg from 'pg';
 import { query, withTransaction, closePool, pool } from './client.js';
 import {
@@ -723,5 +724,68 @@ export class PostgresFleetRepository implements FleetRepository {
       activeAlertsCount: alerts.length,
       recentAlerts: alerts.slice(0, 5),
     };
+  }
+
+  // --- drivers -------------------------------------------------------------
+  async getAllDrivers(): Promise<any[]> {
+    const { rows } = await query(
+      `SELECT u.id, u.full_name AS "fullName", u.phone, u.identifier AS "licenseNumber",
+              u.assigned_bus_id AS "assignedBusId", b.bus_number AS "assignedBusNumber",
+              u.assigned_route_id AS "assignedRouteId", r.name AS "assignedRouteName",
+              CASE WHEN u.is_active THEN 'ACTIVE' ELSE 'INACTIVE' END AS status
+       FROM users u
+       LEFT JOIN buses b ON b.id = u.assigned_bus_id
+       LEFT JOIN routes r ON r.id = u.assigned_route_id
+       WHERE u.role = 'DRIVER'
+       ORDER BY u.full_name`
+    );
+    return rows;
+  }
+
+  async saveDriver(driver: any): Promise<any> {
+    const id = driver.id || `usr-driver-${uuidv4().substring(0, 8)}`;
+    await query(
+      `INSERT INTO users (id, email, password_hash, role, full_name, identifier, phone, campus, assigned_bus_id, assigned_route_id, is_active)
+       VALUES ($1, $2, $3, 'DRIVER', $4, $5, $6, 'MULLANA_MAIN', $7, $8, true)
+       ON CONFLICT (id) DO UPDATE SET
+         full_name = EXCLUDED.full_name,
+         phone = EXCLUDED.phone,
+         identifier = EXCLUDED.identifier,
+         assigned_bus_id = EXCLUDED.assigned_bus_id,
+         assigned_route_id = EXCLUDED.assigned_route_id`,
+      [
+        id,
+        driver.email || `driver.${id}@mmumullana.org`,
+        bcrypt.hashSync(config.demoPassword, 10),
+        driver.fullName,
+        driver.licenseNumber || driver.identifier || id,
+        driver.phone,
+        driver.assignedBusId || null,
+        driver.assignedRouteId || null,
+      ]
+    );
+
+    if (driver.assignedBusId) {
+      await query(`UPDATE buses SET assigned_driver_id = $1 WHERE id = $2`, [id, driver.assignedBusId]);
+    }
+
+    const { rows } = await query(
+      `SELECT u.id, u.full_name AS "fullName", u.phone, u.identifier AS "licenseNumber",
+              u.assigned_bus_id AS "assignedBusId", b.bus_number AS "assignedBusNumber",
+              u.assigned_route_id AS "assignedRouteId", r.name AS "assignedRouteName",
+              CASE WHEN u.is_active THEN 'ACTIVE' ELSE 'INACTIVE' END AS status
+       FROM users u
+       LEFT JOIN buses b ON b.id = u.assigned_bus_id
+       LEFT JOIN routes r ON r.id = u.assigned_route_id
+       WHERE u.id = $1 LIMIT 1`,
+      [id]
+    );
+    return rows[0] || driver;
+  }
+
+  async deleteDriver(id: string): Promise<boolean> {
+    await query(`UPDATE buses SET assigned_driver_id = NULL WHERE assigned_driver_id = $1`, [id]);
+    const { rowCount } = await query(`DELETE FROM users WHERE id = $1 AND role = 'DRIVER'`, [id]);
+    return (rowCount ?? 0) > 0;
   }
 }
